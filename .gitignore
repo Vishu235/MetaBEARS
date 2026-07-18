@@ -1,0 +1,73 @@
+# Local environments and secrets
+.venv/
+venv/
+.env
+.env.*
+.python-version
+
+# Local project plans, reports, and presentation material
+*.md
+*.docx
+*.pptx
+*.pdf
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+*.pyd
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# IDE and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Experiment tracking, logs, and local outputs
+wandb/
+.wandb/
+logs/
+colab_outputs/
+*.log
+results/raw/
+results/artifacts/
+
+# Local/generated datasets and checkpoints
+/lastframe.zip
+/bears.zip
+BDD_OIA/data/
+BDD_OIA/models/
+BDD_OIA/out/
+XOR_MNIST/data/*
+!XOR_MNIST/data/.gitkeep
+!XOR_MNIST/data/rn.npy
+XOR_MNIST/data/raw/
+XOR_MNIST/data/ckpts/
+XOR_MNIST/datasets/utils/2mnist_10digits/
+*.pt
+*.pth
+*.ckpt
+
+# Generated plots and dumps; retain tracked placeholders
+BDD_OIA/dumps/*
+!BDD_OIA/dumps/.gitkeep
+BDD_OIA/plots/*
+!BDD_OIA/plots/.gitkeep
+XOR_MNIST/dumps/*
+!XOR_MNIST/dumps/.gitkeep
+XOR_MNIST/plots/*
+!XOR_MNIST/plots/.gitkeep
+
+# Local/HPC state
+access.lock
+run_slurm.sh
+test_slurm.sh

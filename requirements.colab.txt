@@ -1,0 +1,20 @@
+# Colab-specific runtime dependencies.
+#
+# Do not install the full requirements.txt in Colab. Colab Pro already ships a
+# CUDA-enabled torch/torchvision stack; downgrading those packages to the
+# original 2022 pins often breaks the runtime. This file only fills packages
+# that are usually missing from Colab.
+GPUtil==1.4.0
+LTNtorch==1.0.1
+gdown>=4.7.0
+lime==0.2.0.1
+mycolorpy==1.5.1
+problog==2.2.10
+pyeda>=0.29.0
+pytorchcv==0.0.67
+setproctitle>=1.3.2
+submitit>=1.4.5
+torchmetrics>=0.7.0
+torchviz==0.0.2
+wandb>=0.13.11
+warmup-scheduler @ git+https://github.com/ildoonet/pytorch-gradual-warmup-lr.git@6b5e8953a80aef5b324104dc0c2e9b8c34d622bd
