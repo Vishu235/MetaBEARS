@@ -191,6 +191,22 @@ def halfmnist_eval(args):
     _run(command, args.repo_root / "XOR_MNIST")
 
 
+def metabears_demo(args):
+    output_dir = args.repo_root / "colab_outputs" / "metabears_demo"
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "XOR_MNIST.metacog.demo",
+            "--output-dir",
+            str(output_dir),
+            "--seed",
+            str(args.seed),
+        ],
+        args.repo_root,
+    )
+
+
 def minikand_smoke(args):
     ensure_kandinsky_data(args.repo_root)
     _run(
@@ -341,6 +357,7 @@ def parse_args():
             "xor_smoke",
             "halfmnist_smoke",
             "halfmnist_eval",
+            "metabears_demo",
             "minikand_smoke",
             "bdd_preprocess_smoke",
             "bdd_train_smoke",
@@ -415,6 +432,7 @@ def main():
         "xor_smoke": xor_smoke,
         "halfmnist_smoke": halfmnist_smoke,
         "halfmnist_eval": halfmnist_eval,
+        "metabears_demo": metabears_demo,
         "minikand_smoke": minikand_smoke,
         "bdd_preprocess_smoke": lambda parsed: bdd_preprocess(parsed, full=False),
         "bdd_train_smoke": lambda parsed: bdd_train(parsed, full=False),

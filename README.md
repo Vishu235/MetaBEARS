@@ -8,12 +8,12 @@ MetaBEARS is the Phase II working repository for extending the BEARS neuro-symbo
 - neural familiarity: how similar the input and representation are to the training distribution;
 - shortcut risk: how likely the predicted concepts are semantically wrong despite a correct task label.
 
-The proposed novelty combines a **concept consistency probe** with a **meta-cognitive confidence layer**. This functionality is planned for Phase II and is not yet claimed as implemented.
+The proposed novelty combines a **concept consistency probe** with a **meta-cognitive confidence layer**. An initial framework-independent prototype is implemented; integration with trained BEARS checkpoints and benchmark validation are still in progress.
 
 ## Current status
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
-- Phase II: starting — formalize the metrics, implement the consistency probe, build the confidence report, and evaluate shortcut detection.
+- Phase II: in progress — concept consistency, empirical neural familiarity, separated confidence reporting, serialization, and a deterministic demonstration are implemented as the first vertical slice.
 
 Phase II will proceed from baseline equivalence to the consistency probe, the three-signal confidence report, and controlled shortcut-detection experiments.
 
@@ -47,6 +47,13 @@ Inspect the available reproducible jobs:
 ```powershell
 python colab_runner.py --help
 python colab_runner.py --job diagnostics
+python colab_runner.py --job metabears_demo
+```
+
+Run the focused Phase II tests without additional test dependencies:
+
+```powershell
+python -m unittest discover -s tests -v
 ```
 
 Dataset archives, generated features, checkpoints, logs, and raw outputs are deliberately excluded from Git. Keep all data-dependent artifacts outside version control and record the command, configuration, seed, and dataset version for each experiment.
