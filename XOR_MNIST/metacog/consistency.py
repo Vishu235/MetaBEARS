@@ -131,6 +131,9 @@ def probe_concept_consistency(
     discrete vote disagreement. If perturbations are supplied, semantic
     stability between the original and perturbed ensemble means contributes
     to the score as a third, separately reported component.
+
+    The blend weights below (0.6/0.4, or 0.4/0.2/0.4 with perturbations) are
+    fixed heuristics; they have not been calibrated against validation data.
     """
 
     base = _as_probability_array(
