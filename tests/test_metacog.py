@@ -10,6 +10,9 @@ import numpy as np
 
 from XOR_MNIST.metacog import (
     build_meta_cognitive_report,
+    collect_ensemble_predictions,
+    ensemble_leave_one_out_reference_distances,
+    ensemble_nearest_reference_distances,
     familiarity_from_reference,
     probe_concept_consistency,
     select_review_threshold,
@@ -48,6 +51,177 @@ def inject_shortcut_vote_split(concepts: np.ndarray, sample: int) -> None:
     for member in range(concepts.shape[0]):
         for concept in range(concepts.shape[2]):
             concepts[member, sample, concept] = peaked((concept + member % 2) % 3)
+
+
+class FakeBEARSModel:
+    """Small NumPy model that follows the BEARS output dictionary contract."""
+
+    def __init__(self, member_index: int) -> None:
+        self.member_index = member_index
+        self.evaluation_mode = False
+
+    def eval(self) -> None:
+        self.evaluation_mode = True
+
+    def __call__(self, images: np.ndarray) -> dict:
+        images = np.asarray(images, dtype=np.float64)
+        batch_size = images.shape[0]
+        concept_probabilities = np.empty((batch_size, 2, 3), dtype=np.float64)
+        label_probabilities = np.empty((batch_size, 3), dtype=np.float64)
+
+        for sample_index, sample in enumerate(images[:, 0].astype(int)):
+            label_probabilities[sample_index] = peaked(
+                (sample + self.member_index) % 3,
+                peak=0.9,
+            )
+            for concept_index in range(2):
+                concept_probabilities[sample_index, concept_index] = peaked(
+                    (sample + concept_index + self.member_index) % 3,
+                    peak=0.9,
+                )
+
+        concept_logits = np.repeat(images[:, :, np.newaxis], 2, axis=1)
+        concept_logits = np.concatenate(
+            [concept_logits, concept_logits + self.member_index], axis=2
+        )
+        return {
+            "CS": concept_logits,
+            "YS": label_probabilities,
+            "pCS": concept_probabilities,
+        }
+
+
+class EnsembleIntegrationTests(unittest.TestCase):
+    def test_collector_preserves_member_and_sample_axes(self) -> None:
+        models = [FakeBEARSModel(0), FakeBEARSModel(1)]
+        loader = [
+            (
+                np.array([[0.0], [1.0]]),
+                np.array([0, 1]),
+                np.array([[0, 1], [1, 2]]),
+            ),
+            (
+                np.array([[2.0]]),
+                np.array([2]),
+                np.array([[2, 0]]),
+            ),
+        ]
+
+        collected = collect_ensemble_predictions(models, loader)
+
+        self.assertTrue(all(model.evaluation_mode for model in models))
+        self.assertEqual(collected.concept_member_probabilities.shape, (2, 3, 2, 3))
+        self.assertEqual(collected.label_member_probabilities.shape, (2, 3, 3))
+        self.assertEqual(collected.member_representations.shape, (2, 3, 4))
+        np.testing.assert_array_equal(collected.labels, np.array([0, 1, 2]))
+        np.testing.assert_array_equal(
+            collected.concepts,
+            np.array([[0, 1], [1, 2], [2, 0]]),
+        )
+        self.assertEqual(
+            np.argmax(collected.label_member_probabilities[1, 2]),
+            0,
+        )
+
+    def test_collector_can_skip_representations(self) -> None:
+        loader = [
+            (
+                np.array([[0.0], [1.0]]),
+                np.array([0, 1]),
+                np.array([[0, 1], [1, 2]]),
+            )
+        ]
+        collected = collect_ensemble_predictions(
+            [FakeBEARSModel(0), FakeBEARSModel(1)],
+            loader,
+            representation_key=None,
+        )
+
+        self.assertIsNone(collected.member_representations)
+
+    def test_memberwise_reference_distances_are_averaged_after_lookup(self) -> None:
+        references = np.array(
+            [
+                [[0.0], [4.0], [10.0]],
+                [[0.0], [8.0], [20.0]],
+            ]
+        )
+        queries = np.array(
+            [
+                [[1.0], [7.0]],
+                [[2.0], [14.0]],
+            ]
+        )
+
+        distances = ensemble_nearest_reference_distances(queries, references)
+
+        np.testing.assert_allclose(distances, np.array([1.5, 4.5]))
+
+    def test_leave_one_out_distances_do_not_collapse_to_zero(self) -> None:
+        references = np.array(
+            [
+                [[0.0], [2.0], [5.0]],
+                [[0.0], [4.0], [10.0]],
+            ]
+        )
+
+        distances = ensemble_leave_one_out_reference_distances(references)
+
+        np.testing.assert_allclose(distances, np.array([3.0, 3.0, 4.5]))
+
+    def test_distance_outputs_feed_familiarity_contract(self) -> None:
+        references = np.array(
+            [
+                [[0.0], [1.0], [3.0]],
+                [[0.0], [2.0], [6.0]],
+            ]
+        )
+        queries = np.array([[[0.1], [20.0]], [[0.2], [40.0]]])
+
+        sample_distances = ensemble_nearest_reference_distances(queries, references)
+        reference_distances = ensemble_leave_one_out_reference_distances(references)
+        familiarity = familiarity_from_reference(sample_distances, reference_distances)
+
+        self.assertGreater(familiarity[0], familiarity[1])
+        self.assertEqual(familiarity[1], 0.0)
+
+    def test_collected_outputs_feed_a_meta_cognitive_report(self) -> None:
+        models = [FakeBEARSModel(0), FakeBEARSModel(1)]
+        reference = collect_ensemble_predictions(
+            models,
+            [
+                (
+                    np.array([[0.0], [2.0], [4.0]]),
+                    np.array([0, 2, 1]),
+                    np.array([[0, 1], [2, 0], [1, 2]]),
+                )
+            ],
+        )
+        evaluated = collect_ensemble_predictions(
+            models,
+            [
+                (
+                    np.array([[1.0], [20.0]]),
+                    np.array([1, 2]),
+                    np.array([[1, 2], [2, 0]]),
+                )
+            ],
+        )
+
+        report = build_meta_cognitive_report(
+            evaluated.concept_member_probabilities,
+            evaluated.label_member_probabilities,
+            representation_distances=ensemble_nearest_reference_distances(
+                evaluated.member_representations,
+                reference.member_representations,
+            ),
+            reference_distances=ensemble_leave_one_out_reference_distances(
+                reference.member_representations
+            ),
+        )
+
+        self.assertEqual(report.predicted_label.shape, (2,))
+        self.assertTrue(report.ood_flag[1])
 
 
 class ConceptConsistencyTests(unittest.TestCase):

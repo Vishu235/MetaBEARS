@@ -5,17 +5,17 @@
 MetaBEARS is the Phase II working repository for extending the BEARS neuro-symbolic baseline completed during Phase I. The central research goal is to move from aggregate uncertainty estimates to an interpretable, sample-level meta-cognitive report that distinguishes:
 
 - task confidence: the ensemble-mean probability of the predicted task label. This is a stand-in — a genuine symbolic rule-support/entailment signal is not yet implemented, and the field is named for what it actually measures;
-- neural familiarity: an interpolated reference-relative percentile derived from caller-supplied representation distances. BEARS representation extraction and distance computation are not yet integrated;
+- neural familiarity: an interpolated reference-relative percentile derived from member-wise nearest-neighbour distances in learned BEARS representations. The first integration uses flattened pre-softmax concept logits (`CS`) and a leave-one-out validation reference distribution;
 - shortcut risk: a proxy for semantically unstable concepts despite a stable, confident task label. It is computed from concept/label (in)stability and task confidence while familiarity remains a separate evidence channel.
 
 Review is the union of two independently triggered paths: a `shortcut_flag` (shortcut risk over a validation-selected threshold) and an `ood_flag` (familiarity at or below a validation-selected threshold). Both are reported alongside `review_flag` so a consumer can tell which evidence triggered review. The separation is structural, not a guarantee that the two flags identify distinct real-world causes.
 
-The proposed novelty combines a **concept consistency probe** with a **meta-cognitive confidence layer**. An initial framework-independent prototype is implemented; integration with trained BEARS checkpoints and benchmark validation are still in progress.
+The proposed novelty combines a **concept consistency probe** with a **meta-cognitive confidence layer**. The framework-independent prototype now includes an adapter for real BEARS ensemble outputs; execution on trained checkpoints and benchmark validation are still in progress.
 
 ## Current status
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
-- Phase II: in progress — concept consistency, distance-to-familiarity mapping, separated confidence reporting, a familiarity-driven review path, validation-based threshold selection (`select_review_threshold`), serialization, and a deterministic mechanism check are implemented as the first vertical slice.
+- Phase II: in progress — concept consistency, member-preserving BEARS output collection, representation-distance computation, distance-to-familiarity mapping, separated confidence reporting, a familiarity-driven review path, validation-based threshold selection (`select_review_threshold`), serialization, and deterministic mechanism checks are implemented.
 
 Phase II will proceed from baseline equivalence to the consistency probe, the three-signal confidence report, and controlled shortcut-detection experiments.
 
