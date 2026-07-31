@@ -207,6 +207,70 @@ def metabears_demo(args):
     )
 
 
+def metabears_halfmnist(args):
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = (
+        args.repo_root
+        / "colab_outputs"
+        / "metabears_halfmnist"
+        / timestamp
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "metacog.halfmnist_runner",
+        "--output-dir",
+        str(output_dir),
+        "--seed",
+        str(args.seed),
+        "--n_ensembles",
+        str(args.n_ensembles),
+        "--n_epochs",
+        str(args.epochs),
+        "--batch_size",
+        str(args.batch_size),
+        "--ensemble-kind",
+        args.metabears_ensemble_kind,
+        "--lambda_h",
+        str(args.lambda_h),
+        "--familiarity-validation-quantile",
+        str(args.familiarity_validation_quantile),
+        "--shortcut-fallback-quantile",
+        str(args.shortcut_fallback_quantile),
+        "--non_verbose",
+    ]
+    if args.metabears_checkpoints:
+        command.append("--ensemble-checkpoints")
+        command.extend(args.metabears_checkpoints)
+    if args.metabears_train_ensemble:
+        command.append("--train-ensemble")
+    if args.metabears_real_kl:
+        command.append("--real-kl")
+    if args.metabears_max_batches is not None:
+        command.extend(["--max-batches", str(args.metabears_max_batches)])
+    if args.halfmnist_preset == "repo-best":
+        command.append("--load-best-args")
+    elif args.halfmnist_preset == "paper":
+        command.extend(
+            [
+                "--seed",
+                "0",
+                "--n_epochs",
+                "30",
+                "--batch_size",
+                "64",
+                "--lr",
+                "0.0005",
+                "--exp_decay",
+                "0.95",
+                "--lambda_h",
+                "0.8",
+                "--real-kl",
+            ]
+        )
+    _run(command, args.repo_root / "XOR_MNIST")
+
+
 def minikand_smoke(args):
     ensure_kandinsky_data(args.repo_root)
     _run(
@@ -358,6 +422,7 @@ def parse_args():
             "halfmnist_smoke",
             "halfmnist_eval",
             "metabears_demo",
+            "metabears_halfmnist",
             "minikand_smoke",
             "bdd_preprocess_smoke",
             "bdd_train_smoke",
@@ -374,6 +439,36 @@ def parse_args():
     )
     parser.add_argument("--bdd-output", default=None, help="BDD output data dir.")
     parser.add_argument("--halfmnist-ckpt", default=None, help="HalfMNIST checkpoint path.")
+    parser.add_argument(
+        "--metabears-checkpoints",
+        nargs="*",
+        default=None,
+        help="Explicit HalfMNIST ensemble checkpoints for MetaBEARS.",
+    )
+    parser.add_argument(
+        "--metabears-train-ensemble",
+        action="store_true",
+        help="Train the HalfMNIST ensemble before the MetaBEARS run.",
+    )
+    parser.add_argument(
+        "--metabears-ensemble-kind",
+        choices=["bears", "ensemble"],
+        default="bears",
+    )
+    parser.add_argument("--metabears-real-kl", action="store_true")
+    parser.add_argument("--metabears-max-batches", type=int, default=None)
+    parser.add_argument("--n-ensembles", type=int, default=5)
+    parser.add_argument("--lambda-h", type=float, default=1.0)
+    parser.add_argument(
+        "--familiarity-validation-quantile",
+        type=float,
+        default=0.05,
+    )
+    parser.add_argument(
+        "--shortcut-fallback-quantile",
+        type=float,
+        default=0.95,
+    )
     parser.add_argument(
         "--eval-type",
         default="frequentist",
@@ -433,6 +528,7 @@ def main():
         "halfmnist_smoke": halfmnist_smoke,
         "halfmnist_eval": halfmnist_eval,
         "metabears_demo": metabears_demo,
+        "metabears_halfmnist": metabears_halfmnist,
         "minikand_smoke": minikand_smoke,
         "bdd_preprocess_smoke": lambda parsed: bdd_preprocess(parsed, full=False),
         "bdd_train_smoke": lambda parsed: bdd_train(parsed, full=False),

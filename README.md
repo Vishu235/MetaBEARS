@@ -15,7 +15,7 @@ The proposed novelty combines a **concept consistency probe** with a **meta-cogn
 ## Current status
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
-- Phase II: in progress — concept consistency, member-preserving BEARS output collection, representation-distance computation, distance-to-familiarity mapping, separated confidence reporting, a familiarity-driven review path, validation-based threshold selection (`select_review_threshold`), serialization, and deterministic mechanism checks are implemented.
+- Phase II: in progress — concept consistency, member-preserving BEARS output collection, representation-distance computation, validation-only threshold calibration, held-out ID/OOD evaluation, separated confidence reporting, serialization, and deterministic integration checks are implemented. The real HalfMNIST runner can load saved members or train a fresh ensemble.
 
 Phase II will proceed from baseline equivalence to the consistency probe, the three-signal confidence report, and controlled shortcut-detection experiments.
 
@@ -51,6 +51,22 @@ python colab_runner.py --help
 python colab_runner.py --job diagnostics
 python colab_runner.py --job metabears_demo
 ```
+
+Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
+
+```powershell
+python colab_runner.py --job metabears_halfmnist --metabears-checkpoints <member-1.pt> <member-2.pt> <member-3.pt>
+```
+
+Or train a fresh BEARS ensemble before evaluation:
+
+```powershell
+python colab_runner.py --job metabears_halfmnist --metabears-train-ensemble --halfmnist-preset repo-best
+```
+
+The runner calibrates only on the ID validation split, then writes separate
+validation, ID-test and OOD-test JSON/CSV reports, compressed member-level
+predictions, and `run_summary.json` under `colab_outputs/metabears_halfmnist/`.
 
 Run the focused Phase II tests without additional test dependencies:
 
