@@ -10,6 +10,7 @@ venv/
 !/README.md
 /Phase_II_Guidance_Call_PPT_Content.md
 /july_25_claude_changes.txt
+/Conference paper/
 *.docx
 *.pptx
 *.pdf
