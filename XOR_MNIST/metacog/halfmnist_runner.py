@@ -113,12 +113,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--intervention",
-        choices=["none", "half_swap", "patch_neutral", "patch_conflict"],
+        choices=[
+            "none",
+            "half_swap",
+            "patch_neutral",
+            "patch_conflict",
+            "patch_removed",
+            "patch_shuffled",
+        ],
         default="none",
         help=(
             "Optional label-preserving controlled intervention. half_swap "
-            "exchanges the two digits; patch_neutral and patch_conflict "
-            "replace the task-correlated patch and require "
+            "exchanges the two digits; patch_* controls replace, remove, or "
+            "shuffle the task-correlated patch and require "
             "--shortcut-patch-training."
         ),
     )

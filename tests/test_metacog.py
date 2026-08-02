@@ -115,6 +115,62 @@ class HalfMNISTInterventionTests(unittest.TestCase):
         self.assertEqual(patched[0, 0, 1:4, 1:4].mean(), 0.5)
         self.assertEqual(patched[0, 0, 1:4, 29:32].mean(), 0.5)
 
+    def test_removed_patch_restores_reserved_cells_to_background(self) -> None:
+        images = np.ones((1, 1, 28, 56), dtype=np.float32)
+
+        patched = apply_halfmnist_label_patch(
+            images, np.array([8]), mode="removed"
+        )
+
+        for half_offset in (0, 28):
+            for start in (1, 5, 9, 13, 17):
+                np.testing.assert_array_equal(
+                    patched[
+                        0,
+                        0,
+                        1:4,
+                        half_offset + start : half_offset + start + 3,
+                    ],
+                    0.0,
+                )
+        self.assertEqual(patched[0, 0, 10, 10], 1.0)
+
+    def test_shuffled_patch_preserves_batch_labels_but_reassigns_them(self) -> None:
+        images = np.zeros((3, 1, 28, 56), dtype=np.float32)
+
+        patched = apply_halfmnist_label_patch(
+            images, np.array([1, 4, 7]), mode="shuffled"
+        )
+
+        expected_bright_cells = ((13, 45), (1, 33), (9, 37))
+        for sample_index, (left_start, right_start) in enumerate(
+            expected_bright_cells
+        ):
+            self.assertEqual(
+                patched[sample_index, 0, 1:4, left_start : left_start + 3].mean(),
+                1.0,
+            )
+            self.assertEqual(
+                patched[
+                    sample_index,
+                    0,
+                    1:4,
+                    right_start : right_start + 3,
+                ].mean(),
+                1.0,
+            )
+
+    def test_shuffled_patch_selects_rotation_with_fewest_matches(self) -> None:
+        images = np.zeros((4, 1, 28, 56), dtype=np.float32)
+
+        patched = apply_halfmnist_label_patch(
+            images, np.array([1, 1, 4, 4]), mode="shuffled"
+        )
+
+        # A two-position rotation gives [4, 4, 1, 1] with no label matches.
+        self.assertEqual(patched[1, 0, 1:4, 9:12].mean(), 1.0)
+        self.assertEqual(patched[1, 0, 1:4, 37:40].mean(), 1.0)
+
 
 class FakeBEARSModel:
     """Small NumPy model that follows the BEARS output dictionary contract."""

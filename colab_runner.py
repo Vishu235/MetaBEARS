@@ -463,7 +463,14 @@ def parse_args():
     parser.add_argument("--metabears-max-batches", type=int, default=None)
     parser.add_argument(
         "--metabears-intervention",
-        choices=["none", "half_swap", "patch_neutral", "patch_conflict"],
+        choices=[
+            "none",
+            "half_swap",
+            "patch_neutral",
+            "patch_conflict",
+            "patch_removed",
+            "patch_shuffled",
+        ],
         default="none",
     )
     parser.add_argument(

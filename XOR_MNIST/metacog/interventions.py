@@ -79,11 +79,23 @@ def apply_halfmnist_label_patch(
     therefore ``y`` even when the visible digits represent different concepts.
 
     ``correlated`` encodes the true task label, ``conflict`` encodes the next
-    cyclic label, and ``neutral`` fills every reserved cell with 0.5.
+    cyclic label, ``neutral`` fills every reserved cell with 0.5,
+    ``removed`` restores the reserved cells to background zero, and
+    ``shuffled`` cyclically assigns labels from other samples in the batch.
     """
 
-    if mode not in {"correlated", "conflict", "neutral"}:
-        raise ValueError("Patch mode must be correlated, conflict, or neutral.")
+    supported_modes = {
+        "correlated",
+        "conflict",
+        "neutral",
+        "removed",
+        "shuffled",
+    }
+    if mode not in supported_modes:
+        raise ValueError(
+            "Patch mode must be correlated, conflict, neutral, removed, "
+            "or shuffled."
+        )
     if not isinstance(patch_size, int) or patch_size < 1:
         raise ValueError("patch_size must be a positive integer.")
 
@@ -125,12 +137,22 @@ def apply_halfmnist_label_patch(
     if np.any(target_labels < 0) or np.any(target_labels > 8):
         raise ValueError("HalfMNIST addition patch labels must lie in [0, 8].")
 
+    encoded_labels = target_labels.copy()
+    if mode == "conflict":
+        encoded_labels = (encoded_labels + 1) % 9
+    elif mode == "shuffled":
+        best_match_count = encoded_labels.size + 1
+        for shift in range(1, encoded_labels.size):
+            candidate = np.roll(target_labels, shift)
+            match_count = int(np.count_nonzero(candidate == target_labels))
+            if match_count < best_match_count:
+                encoded_labels = candidate
+                best_match_count = match_count
+
     cell_starts = [gap + index * (patch_size + gap) for index in range(cell_count)]
     row_start = gap
-    for sample_index, task_label in enumerate(target_labels):
-        encoded_label = (
-            (int(task_label) + 1) % 9 if mode == "conflict" else int(task_label)
-        )
+    for sample_index, encoded_label in enumerate(encoded_labels):
+        encoded_label = int(encoded_label)
         pseudo_digits = (
             encoded_label // 2,
             encoded_label - encoded_label // 2,
@@ -138,11 +160,12 @@ def apply_halfmnist_label_patch(
         for half_index, pseudo_digit in enumerate(pseudo_digits):
             half_offset = half_index * half_width
             for cell_index, column_start in enumerate(cell_starts):
-                value = (
-                    0.5
-                    if mode == "neutral"
-                    else float(cell_index == pseudo_digit)
-                )
+                if mode == "neutral":
+                    value = 0.5
+                elif mode == "removed":
+                    value = 0.0
+                else:
+                    value = float(cell_index == pseudo_digit)
                 batch[
                     sample_index,
                     :,
@@ -227,6 +250,22 @@ def contradict_halfmnist_label_patch(
     return apply_halfmnist_label_patch(images, labels, mode="conflict")
 
 
+def remove_halfmnist_label_patch(
+    images: Any, labels: Any, concepts: Any = None
+) -> Any:
+    """Remove the bright cue by restoring all reserved cells to zero."""
+
+    return apply_halfmnist_label_patch(images, labels, mode="removed")
+
+
+def shuffle_halfmnist_label_patch(
+    images: Any, labels: Any, concepts: Any = None
+) -> Any:
+    """Cyclically reassign valid patches within an evaluation batch."""
+
+    return apply_halfmnist_label_patch(images, labels, mode="shuffled")
+
+
 HALFMNIST_HALF_SWAP = PredictionIntervention(
     name="half_swap",
     description=(
@@ -257,6 +296,28 @@ HALFMNIST_PATCH_CONFLICT = PredictionIntervention(
     align_concept_probabilities=align_identity_concept_probabilities,
 )
 
+HALFMNIST_PATCH_REMOVED = PredictionIntervention(
+    name="patch_removed",
+    description=(
+        "Remove the task-correlated cue by restoring all reserved patch cells "
+        "to background zero while preserving the visible digits and label."
+    ),
+    transform_images=remove_halfmnist_label_patch,
+    align_concept_probabilities=align_identity_concept_probabilities,
+)
+
+HALFMNIST_PATCH_SHUFFLED = PredictionIntervention(
+    name="patch_shuffled",
+    description=(
+        "Cyclically reassign task-correlated patches within each batch using "
+        "the rotation with the fewest label matches. This preserves the "
+        "empirical one-hot patch distribution while breaking sample-level "
+        "alignment; repeated labels can remain unchanged."
+    ),
+    transform_images=shuffle_halfmnist_label_patch,
+    align_concept_probabilities=align_identity_concept_probabilities,
+)
+
 
 def get_intervention(name: str) -> PredictionIntervention:
     """Resolve a supported controlled intervention by CLI name."""
@@ -267,6 +328,8 @@ def get_intervention(name: str) -> PredictionIntervention:
             HALFMNIST_HALF_SWAP,
             HALFMNIST_PATCH_NEUTRAL,
             HALFMNIST_PATCH_CONFLICT,
+            HALFMNIST_PATCH_REMOVED,
+            HALFMNIST_PATCH_SHUFFLED,
         )
     }
     if name in interventions:

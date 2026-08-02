@@ -17,6 +17,8 @@ from .interventions import (
     HALFMNIST_HALF_SWAP,
     HALFMNIST_PATCH_CONFLICT,
     HALFMNIST_PATCH_NEUTRAL,
+    HALFMNIST_PATCH_REMOVED,
+    HALFMNIST_PATCH_SHUFFLED,
     HalfMNISTLabelPatchDataset,
     PredictionIntervention,
     align_identity_concept_probabilities,
@@ -25,6 +27,8 @@ from .interventions import (
     contradict_halfmnist_label_patch,
     get_intervention,
     neutralize_halfmnist_label_patch,
+    remove_halfmnist_label_patch,
+    shuffle_halfmnist_label_patch,
     swap_halfmnist_image_halves,
 )
 from .experiment import (
@@ -49,6 +53,8 @@ __all__ = [
     "HALFMNIST_HALF_SWAP",
     "HALFMNIST_PATCH_CONFLICT",
     "HALFMNIST_PATCH_NEUTRAL",
+    "HALFMNIST_PATCH_REMOVED",
+    "HALFMNIST_PATCH_SHUFFLED",
     "HalfMNISTLabelPatchDataset",
     "align_identity_concept_probabilities",
     "align_swapped_concept_probabilities",
@@ -63,9 +69,11 @@ __all__ = [
     "familiarity_from_reference",
     "get_intervention",
     "neutralize_halfmnist_label_patch",
+    "remove_halfmnist_label_patch",
     "probe_concept_consistency",
     "run_metabears_experiment",
     "select_review_threshold",
     "shortcut_proxy_labels",
+    "shuffle_halfmnist_label_patch",
     "swap_halfmnist_image_halves",
 ]

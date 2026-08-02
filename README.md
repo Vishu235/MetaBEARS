@@ -83,6 +83,12 @@ visible digits and ground-truth label unchanged. Checkpoint names include a
 BEARS members. Behavioral proxies remain explicitly separated from claims
 about the model's internal causal mechanism.
 
+The same controlled checkpoints support two additional ablations without
+retraining. `patch_removed` restores every reserved cue cell to background
+zero, while `patch_shuffled` selects the cyclic batch rotation with the fewest
+label matches. The latter preserves the empirical one-hot patch distribution
+while breaking as much sample-level alignment as that batch permits.
+
 Or train a fresh BEARS ensemble before evaluation:
 
 ```powershell
