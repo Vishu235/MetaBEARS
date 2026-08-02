@@ -58,6 +58,17 @@ Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
 python colab_runner.py --job metabears_halfmnist --metabears-checkpoints <member-1.pt> <member-2.pt> <member-3.pt>
 ```
 
+Add the controlled commutative half-swap intervention without retraining:
+
+```powershell
+python colab_runner.py --job metabears_halfmnist --metabears-checkpoints <member-1.pt> <member-2.pt> <member-3.pt> --metabears-intervention half_swap --ece-bins 15
+```
+
+The intervention exchanges the two HalfMNIST digits, preserves the addition
+label, and aligns the predicted concept positions back before measuring
+semantic consistency. Its behavioral proxies are reported separately from
+causal shortcut claims.
+
 Or train a fresh BEARS ensemble before evaluation:
 
 ```powershell
@@ -66,7 +77,9 @@ python colab_runner.py --job metabears_halfmnist --metabears-train-ensemble --ha
 
 The runner calibrates only on the ID validation split, then writes separate
 validation, ID-test and OOD-test JSON/CSV reports, compressed member-level
-predictions, and `run_summary.json` under `colab_outputs/metabears_halfmnist/`.
+predictions, held-out shortcut-proxy metrics, task/concept F1 and ECE,
+selective-risk metrics, optional paired-intervention artifacts, and
+`run_summary.json` under `colab_outputs/metabears_halfmnist/`.
 
 Run the focused Phase II tests without additional test dependencies:
 

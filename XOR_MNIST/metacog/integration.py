@@ -3,7 +3,7 @@
 from contextlib import nullcontext
 from dataclasses import dataclass
 import sys
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -144,6 +144,7 @@ def collect_ensemble_predictions(
     apply_label_softmax: bool = False,
     representation_key: Optional[str] = "CS",
     device: Any = None,
+    image_transform: Optional[Callable[[Any], Any]] = None,
 ) -> EnsemblePredictions:
     """Collect BEARS outputs without averaging away the ensemble member axis.
 
@@ -152,6 +153,10 @@ def collect_ensemble_predictions(
     a per-member representation suitable for reference-distance computation.
     Set ``representation_key=None`` to collect probabilities only, or provide a
     different output key when a model exposes a dedicated trained embedding.
+
+    ``image_transform`` optionally applies a controlled transform immediately
+    before inference while retaining the loader's original targets. This is
+    used for paired label-preserving intervention runs.
 
     ``apply_label_softmax`` is intended for BEARS variants whose ``YS`` output
     contains logits. It must remain false for DPL, where ``YS`` is already a
@@ -177,13 +182,16 @@ def collect_ensemble_predictions(
                     "Each loader batch must be (images, labels, concepts)."
                 )
             images, labels, concepts = batch
+            inference_images = (
+                image_transform(images) if image_transform is not None else images
+            )
 
             output_dicts = []
             for member_index, model in enumerate(models):
                 member_device = (
                     device if device is not None else getattr(model, "device", None)
                 )
-                outputs = model(_move_to_device(images, member_device))
+                outputs = model(_move_to_device(inference_images, member_device))
                 if not isinstance(outputs, Mapping):
                     raise ValueError(
                         f"Ensemble member {member_index} must return a mapping."

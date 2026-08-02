@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from XOR_MNIST.metacog import (
+    align_swapped_concept_probabilities,
     build_meta_cognitive_report,
     collect_ensemble_predictions,
     ensemble_leave_one_out_reference_distances,
@@ -16,6 +17,7 @@ from XOR_MNIST.metacog import (
     familiarity_from_reference,
     probe_concept_consistency,
     select_review_threshold,
+    swap_halfmnist_image_halves,
 )
 from XOR_MNIST.metacog.demo import run_demo
 
@@ -51,6 +53,30 @@ def inject_shortcut_vote_split(concepts: np.ndarray, sample: int) -> None:
     for member in range(concepts.shape[0]):
         for concept in range(concepts.shape[2]):
             concepts[member, sample, concept] = peaked((concept + member % 2) % 3)
+
+
+class HalfMNISTInterventionTests(unittest.TestCase):
+    def test_half_swap_exchanges_image_halves(self) -> None:
+        images = np.arange(8).reshape(1, 1, 2, 4)
+
+        swapped = swap_halfmnist_image_halves(images)
+
+        np.testing.assert_array_equal(swapped[..., :2], images[..., 2:])
+        np.testing.assert_array_equal(swapped[..., 2:], images[..., :2])
+
+    def test_half_swap_alignment_reverses_concept_positions(self) -> None:
+        probabilities = np.zeros((2, 1, 2, 3), dtype=np.float64)
+        probabilities[:, :, 0, 0] = 1.0
+        probabilities[:, :, 1, 2] = 1.0
+
+        aligned = align_swapped_concept_probabilities(probabilities)
+
+        np.testing.assert_array_equal(aligned[:, :, 0], probabilities[:, :, 1])
+        np.testing.assert_array_equal(aligned[:, :, 1], probabilities[:, :, 0])
+
+    def test_half_swap_rejects_odd_width(self) -> None:
+        with self.assertRaisesRegex(ValueError, "even"):
+            swap_halfmnist_image_halves(np.zeros((1, 1, 3, 5)))
 
 
 class FakeBEARSModel:
@@ -358,6 +384,10 @@ class MetaCognitiveReportTests(unittest.TestCase):
             self.assertEqual(payload["summary"]["samples"], 2)
             self.assertEqual(len(payload["samples"]), 2)
             self.assertIn("task_confidence", payload["samples"][0])
+            self.assertIn("perturbation_js", payload["samples"][0])
+            self.assertIn(
+                "ensemble_concept_disagreement", payload["samples"][0]
+            )
             self.assertIn("shortcut_flag", payload["samples"][0])
             self.assertIn("ood_flag", payload["samples"][0])
             self.assertNotIn("symbolic_confidence", payload["samples"][0])

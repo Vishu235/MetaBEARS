@@ -13,6 +13,13 @@ from .integration import (
     ensemble_leave_one_out_reference_distances,
     ensemble_nearest_reference_distances,
 )
+from .interventions import (
+    HALFMNIST_HALF_SWAP,
+    PredictionIntervention,
+    align_swapped_concept_probabilities,
+    get_intervention,
+    swap_halfmnist_image_halves,
+)
 from .experiment import (
     MetaBEARSCalibration,
     MetaBEARSExperimentResult,
@@ -30,7 +37,10 @@ __all__ = [
     "MetaBEARSCalibration",
     "MetaBEARSExperimentResult",
     "MetaCognitiveReport",
+    "PredictionIntervention",
     "ThresholdSelection",
+    "HALFMNIST_HALF_SWAP",
+    "align_swapped_concept_probabilities",
     "build_meta_cognitive_report",
     "build_calibrated_report",
     "calibrate_metabears",
@@ -38,8 +48,10 @@ __all__ = [
     "ensemble_leave_one_out_reference_distances",
     "ensemble_nearest_reference_distances",
     "familiarity_from_reference",
+    "get_intervention",
     "probe_concept_consistency",
     "run_metabears_experiment",
     "select_review_threshold",
     "shortcut_proxy_labels",
+    "swap_halfmnist_image_halves",
 ]

@@ -36,6 +36,9 @@ class MetaCognitiveReport:
     neural_familiarity: np.ndarray
     shortcut_risk: np.ndarray
     concept_consistency: np.ndarray
+    ensemble_concept_disagreement: np.ndarray
+    concept_vote_disagreement: np.ndarray
+    perturbation_js: np.ndarray
     label_disagreement: np.ndarray
     shortcut_flag: np.ndarray
     ood_flag: np.ndarray
@@ -50,6 +53,9 @@ class MetaCognitiveReport:
             self.neural_familiarity,
             self.shortcut_risk,
             self.concept_consistency,
+            self.ensemble_concept_disagreement,
+            self.concept_vote_disagreement,
+            self.perturbation_js,
             self.label_disagreement,
             self.shortcut_flag,
             self.ood_flag,
@@ -85,6 +91,13 @@ class MetaCognitiveReport:
                     "task_confidence": float(self.task_confidence[index]),
                     "neural_familiarity": float(self.neural_familiarity[index]),
                     "concept_consistency": float(self.concept_consistency[index]),
+                    "ensemble_concept_disagreement": float(
+                        self.ensemble_concept_disagreement[index]
+                    ),
+                    "concept_vote_disagreement": float(
+                        self.concept_vote_disagreement[index]
+                    ),
+                    "perturbation_js": float(self.perturbation_js[index]),
                     "label_disagreement": float(self.label_disagreement[index]),
                     "shortcut_risk": float(self.shortcut_risk[index]),
                     "shortcut_flag": bool(self.shortcut_flag[index]),
@@ -110,6 +123,13 @@ class MetaCognitiveReport:
             "mean_task_confidence": float(self.task_confidence.mean()),
             "mean_neural_familiarity": float(self.neural_familiarity.mean()),
             "mean_concept_consistency": float(self.concept_consistency.mean()),
+            "mean_ensemble_concept_disagreement": float(
+                self.ensemble_concept_disagreement.mean()
+            ),
+            "mean_concept_vote_disagreement": float(
+                self.concept_vote_disagreement.mean()
+            ),
+            "mean_perturbation_js": float(self.perturbation_js.mean()),
             "mean_shortcut_risk": float(self.shortcut_risk.mean()),
         }
 
@@ -229,6 +249,9 @@ def build_meta_cognitive_report(
         neural_familiarity=neural_familiarity,
         shortcut_risk=shortcut_risk,
         concept_consistency=consistency.score,
+        ensemble_concept_disagreement=consistency.ensemble_js,
+        concept_vote_disagreement=consistency.vote_disagreement,
+        perturbation_js=consistency.perturbation_js,
         label_disagreement=label_disagreement,
         shortcut_flag=shortcut_flag,
         ood_flag=ood_flag,

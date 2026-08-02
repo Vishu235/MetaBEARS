@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from XOR_MNIST.metacog import (
+    PredictionIntervention,
     calibrate_metabears,
     collect_ensemble_predictions,
     run_metabears_experiment,
@@ -148,6 +149,47 @@ class ExperimentRunnerTests(unittest.TestCase):
         self.assertEqual(summary["splits"]["ood_test"]["samples"], 2)
         self.assertEqual(summary["ood_detection"]["auroc"], 1.0)
         self.assertEqual(summary["ood_detection"]["average_precision"], 1.0)
+        self.assertIn("task_macro_f1", summary["splits"]["id_test"])
+        self.assertIn("task_ece", summary["splits"]["id_test"])
+        self.assertIn("concept_macro_f1", summary["splits"]["id_test"])
+        self.assertIn("accepted_task_risk", summary["splits"]["id_test"])
+        self.assertIn("id_test", summary["shortcut_detection"])
+
+    def test_experiment_runs_paired_intervention_and_writes_artifacts(self) -> None:
+        identity = PredictionIntervention(
+            name="identity_test",
+            description="Identity transform used to test paired orchestration.",
+            transform_images=lambda images: np.asarray(images).copy(),
+            align_concept_probabilities=lambda probabilities: np.asarray(
+                probabilities
+            ).copy(),
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory)
+            result = run_metabears_experiment(
+                [FakeHalfMNISTMember(0), FakeHalfMNISTMember(1)],
+                loader([0, 1, 2, 3]),
+                loader([0, 1, 2, 3]),
+                ood_test_loader=loader([20, 21]),
+                output_directory=output,
+                intervention=identity,
+            )
+            observed_files = {path.name for path in output.iterdir()}
+
+        self.assertIn("validation_intervention_predictions.npz", observed_files)
+        self.assertIn("id_test_intervention_predictions.npz", observed_files)
+        self.assertIn("ood_test_intervention_predictions.npz", observed_files)
+        self.assertEqual(result.summary["intervention"]["name"], "identity_test")
+        self.assertEqual(
+            result.summary["intervention"]["id_test"][
+                "task_prediction_invariance_rate"
+            ],
+            1.0,
+        )
+        self.assertEqual(
+            result.summary["splits"]["id_test"]["mean_perturbation_js"],
+            0.0,
+        )
 
     def test_experiment_can_run_without_an_ood_split(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

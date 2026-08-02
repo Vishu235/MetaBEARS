@@ -164,15 +164,15 @@ def halfmnist_eval(args):
         args.eval_type,
         "--checkin",
         str(ckpt),
+        "--seed",
+        str(args.seed),
         "--non_verbose",
     ]
     if args.halfmnist_preset == "repo-best":
-        command.extend(["--load_best_args", "--seed", str(args.seed)])
+        command.append("--load_best_args")
     elif args.halfmnist_preset == "paper":
         command.extend(
             [
-                "--seed",
-                "0",
                 "--n_epochs",
                 "30",
                 "--batch_size",
@@ -237,6 +237,10 @@ def metabears_halfmnist(args):
         str(args.familiarity_validation_quantile),
         "--shortcut-fallback-quantile",
         str(args.shortcut_fallback_quantile),
+        "--intervention",
+        args.metabears_intervention,
+        "--ece-bins",
+        str(args.ece_bins),
         "--non_verbose",
     ]
     if args.metabears_checkpoints:
@@ -253,8 +257,6 @@ def metabears_halfmnist(args):
     elif args.halfmnist_preset == "paper":
         command.extend(
             [
-                "--seed",
-                "0",
                 "--n_epochs",
                 "30",
                 "--batch_size",
@@ -457,6 +459,12 @@ def parse_args():
     )
     parser.add_argument("--metabears-real-kl", action="store_true")
     parser.add_argument("--metabears-max-batches", type=int, default=None)
+    parser.add_argument(
+        "--metabears-intervention",
+        choices=["none", "half_swap"],
+        default="none",
+    )
+    parser.add_argument("--ece-bins", type=int, default=15)
     parser.add_argument("--n-ensembles", type=int, default=5)
     parser.add_argument("--lambda-h", type=float, default=1.0)
     parser.add_argument(

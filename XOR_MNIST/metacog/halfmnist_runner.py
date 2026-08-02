@@ -8,6 +8,7 @@ import time
 from typing import Any, List, Optional, Sequence
 
 from .experiment import run_metabears_experiment
+from .interventions import get_intervention
 
 
 def _xor_root() -> Path:
@@ -109,6 +110,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional smoke-test limit applied independently to every split.",
+    )
+    parser.add_argument(
+        "--intervention",
+        choices=["none", "half_swap"],
+        default="none",
+        help=(
+            "Optional label-preserving controlled intervention. half_swap "
+            "exchanges the two digits and aligns concept positions back."
+        ),
+    )
+    parser.add_argument(
+        "--ece-bins",
+        type=int,
+        default=15,
+        help="Number of fixed-width bins for task and concept ECE.",
     )
     return parser
 
@@ -244,6 +260,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("--n_ensembles must be at least 2.")
     if args.train_ensemble and args.ensemble_checkpoints:
         parser.error("Use either --train-ensemble or --ensemble-checkpoints, not both.")
+    if args.ece_bins < 2:
+        parser.error("--ece-bins must be at least 2.")
 
     checkpoint_paths: Sequence[Path] = []
     if not args.train_ensemble:
@@ -281,6 +299,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.output_dir
         else _default_output_directory()
     )
+    intervention = (
+        None if args.intervention == "none" else get_intervention(args.intervention)
+    )
     configuration = {
         "dataset": args.dataset,
         "model": args.model,
@@ -300,6 +321,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "real_kl": args.real_kl,
         "knowledge_aware_kl": args.knowledge_aware_kl,
         "lambda_h": args.lambda_h,
+        "intervention": args.intervention,
+        "ece_bins": args.ece_bins,
     }
     result = run_metabears_experiment(
         ensemble,
@@ -311,6 +334,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         shortcut_fallback_quantile=args.shortcut_fallback_quantile,
         representation_key=args.representation_key,
         max_batches=args.max_batches,
+        ece_bins=args.ece_bins,
+        intervention=intervention,
         run_configuration=configuration,
     )
 
