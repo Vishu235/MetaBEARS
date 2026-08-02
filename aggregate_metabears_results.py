@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 from statistics import mean, stdev
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -18,9 +19,12 @@ METRIC_FIELDS = (
     "id_base_task_accuracy",
     "id_perturbed_task_accuracy",
     "id_accuracy_drop",
+    "mismatch_normalized_accuracy_drop",
+    "task_failure_prevalence",
     "task_failure_precision",
     "task_failure_recall",
     "task_failure_f1",
+    "semantic_instability_prevalence",
     "semantic_instability_auroc",
     "semantic_instability_average_precision",
     "semantic_instability_f1",
@@ -30,6 +34,49 @@ METRIC_FIELDS = (
     "ood_average_precision",
     "ood_f1",
     "effective_patch_mismatch_rate",
+)
+
+OOD_METRIC_FIELDS = (
+    "ood_auroc",
+    "ood_average_precision",
+    "ood_f1",
+)
+
+# Two-sided 95% Student-t critical values. Frozen experiments currently use
+# three independent seeds (two degrees of freedom), but the complete table
+# keeps partial and future reporting statistically well-defined.
+_T_CRITICAL_975 = (
+    None,
+    12.706204736,
+    4.302652730,
+    3.182446305,
+    2.776445105,
+    2.570581836,
+    2.446911851,
+    2.364624252,
+    2.306004135,
+    2.262157163,
+    2.228138852,
+    2.200985160,
+    2.178812830,
+    2.160368656,
+    2.144786688,
+    2.131449546,
+    2.119905299,
+    2.109815578,
+    2.100922040,
+    2.093024054,
+    2.085963447,
+    2.079613845,
+    2.073873068,
+    2.068657610,
+    2.063898562,
+    2.059538553,
+    2.055529439,
+    2.051830516,
+    2.048407142,
+    2.045229642,
+    2.042272456,
 )
 
 
@@ -66,6 +113,15 @@ def extract_run_row(
     semantic_detection = id_metrics["semantic_instability_detection"]
     base_accuracy = float(id_metrics["base_task_accuracy"])
     perturbed_accuracy = float(id_metrics["perturbed_task_accuracy"])
+    accuracy_drop = base_accuracy - perturbed_accuracy
+    mismatch_rate = _nested(
+        id_metrics, "input_assignment", "effective_mismatch_rate"
+    )
+    normalized_drop = (
+        accuracy_drop / float(mismatch_rate)
+        if mismatch_rate is not None and float(mismatch_rate) > 0.0
+        else None
+    )
     provenance = summary["provenance"]
     return {
         "summary_path": str(summary_path.resolve()),
@@ -78,12 +134,18 @@ def extract_run_row(
         "checkpoint_fingerprint": _artifact_fingerprint(
             provenance.get("checkpoints"), name="checkpoint"
         ),
+        "id_samples": int(id_metrics["samples"]),
         "id_base_task_accuracy": base_accuracy,
         "id_perturbed_task_accuracy": perturbed_accuracy,
-        "id_accuracy_drop": base_accuracy - perturbed_accuracy,
+        "id_accuracy_drop": accuracy_drop,
+        "mismatch_normalized_accuracy_drop": normalized_drop,
+        "task_failure_count": int(task_detection["positive_count"]),
+        "task_failure_prevalence": task_detection["prevalence"],
         "task_failure_precision": task_detection["precision"],
         "task_failure_recall": task_detection["recall"],
         "task_failure_f1": task_detection["f1"],
+        "semantic_instability_count": int(semantic_detection["positive_count"]),
+        "semantic_instability_prevalence": semantic_detection["prevalence"],
         "semantic_instability_auroc": semantic_detection["auroc"],
         "semantic_instability_average_precision": semantic_detection[
             "average_precision"
@@ -96,9 +158,7 @@ def extract_run_row(
             summary, "ood_detection", "average_precision"
         ),
         "ood_f1": _nested(summary, "ood_detection", "f1"),
-        "effective_patch_mismatch_rate": _nested(
-            id_metrics, "input_assignment", "effective_mismatch_rate"
-        ),
+        "effective_patch_mismatch_rate": mismatch_rate,
     }
 
 
@@ -187,6 +247,15 @@ def discover_rows(
             raise ValueError(
                 f"Controls for seed {seed} do not share identical checkpoints."
             )
+    fingerprint_seeds: Dict[str, int] = {}
+    for row in rows:
+        fingerprint = str(row["checkpoint_fingerprint"])
+        seed = int(row["seed"])
+        previous_seed = fingerprint_seeds.setdefault(fingerprint, seed)
+        if previous_seed != seed:
+            raise ValueError(
+                f"Seeds {previous_seed} and {seed} reuse identical checkpoints."
+            )
     return rows
 
 
@@ -196,17 +265,116 @@ def aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     for intervention in interventions:
         selected = [row for row in rows if row["intervention"] == intervention]
         for metric in METRIC_FIELDS:
-            values = [float(row[metric]) for row in selected if row.get(metric) is not None]
+            values = [
+                float(row[metric])
+                for row in selected
+                if row.get(metric) is not None
+            ]
             aggregates.append(
-                {
-                    "intervention": intervention,
-                    "metric": metric,
-                    "n": len(values),
-                    "mean": mean(values) if values else None,
-                    "sample_std": stdev(values) if len(values) > 1 else None,
-                }
+                _aggregate_values(
+                    values,
+                    grouping_key="intervention",
+                    grouping_value=intervention,
+                    metric=metric,
+                )
             )
     return aggregates
+
+
+def _t_critical_975(degrees_of_freedom: int) -> float:
+    if degrees_of_freedom < 1:
+        raise ValueError("degrees_of_freedom must be positive.")
+    if degrees_of_freedom < len(_T_CRITICAL_975):
+        return float(_T_CRITICAL_975[degrees_of_freedom])
+    # The normal critical value is a close approximation once the number of
+    # independent runs is larger than the frozen study matrix.
+    return 1.959963985
+
+
+def _aggregate_values(
+    values: Sequence[float],
+    *,
+    grouping_key: str,
+    grouping_value: str,
+    metric: str,
+) -> Dict[str, Any]:
+    count = len(values)
+    average = mean(values) if values else None
+    sample_std = stdev(values) if count > 1 else None
+    standard_error = (
+        sample_std / math.sqrt(count) if sample_std is not None else None
+    )
+    margin = (
+        _t_critical_975(count - 1) * standard_error
+        if standard_error is not None
+        else None
+    )
+    return {
+        grouping_key: grouping_value,
+        "metric": metric,
+        "n": count,
+        "mean": average,
+        "sample_std": sample_std,
+        "standard_error": standard_error,
+        "ci95_low": average - margin if margin is not None else None,
+        "ci95_high": average + margin if margin is not None else None,
+        "ci_method": (
+            "two-sided Student-t over independent seeds"
+            if margin is not None
+            else None
+        ),
+    }
+
+
+def aggregate_unique_models(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Aggregate OOD metrics once per independently trained ensemble.
+
+    Intervention controls reuse identical checkpoints, so counting their OOD
+    results separately would duplicate the same model-level observation.
+    """
+
+    unique: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        fingerprint = str(row["checkpoint_fingerprint"])
+        candidate = {
+            "seed": int(row["seed"]),
+            "git_commit": row.get("git_commit"),
+            "dataset_fingerprint": row.get("dataset_fingerprint"),
+            "checkpoint_fingerprint": fingerprint,
+            **{metric: row.get(metric) for metric in OOD_METRIC_FIELDS},
+        }
+        previous = unique.get(fingerprint)
+        if previous is not None:
+            if previous["seed"] != candidate["seed"]:
+                raise ValueError(
+                    "Independent seeds reuse an identical checkpoint fingerprint."
+                )
+            for metric in OOD_METRIC_FIELDS:
+                if previous.get(metric) != candidate.get(metric):
+                    raise ValueError(
+                        "Controls sharing checkpoints contain inconsistent "
+                        f"{metric} values."
+                    )
+        else:
+            unique[fingerprint] = candidate
+
+    model_rows = sorted(unique.values(), key=lambda row: int(row["seed"]))
+    aggregates = []
+    for metric in OOD_METRIC_FIELDS:
+        values = [
+            float(row[metric]) for row in model_rows if row.get(metric) is not None
+        ]
+        aggregates.append(
+            _aggregate_values(
+                values,
+                grouping_key="unit",
+                grouping_value="unique_ensemble",
+                metric=metric,
+            )
+        )
+    return model_rows, aggregates
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -219,18 +387,23 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
 
 
 def _plot_aggregates(
-    output_directory: Path, aggregates: Sequence[Mapping[str, Any]]
+    output_directory: Path,
+    aggregates: Sequence[Mapping[str, Any]],
+    rows: Sequence[Mapping[str, Any]],
 ) -> Optional[str]:
     try:
+        import matplotlib
+
+        matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
         return "matplotlib is unavailable; aggregate plots were skipped."
 
     metrics = (
-        ("id_accuracy_drop", "ID accuracy drop"),
-        ("task_failure_f1", "Task-failure F1"),
-        ("semantic_instability_auroc", "Semantic AUROC"),
-        ("review_rate", "Review rate"),
+        ("id_accuracy_drop", "ID accuracy drop (%)"),
+        ("task_failure_f1", "Task-failure F1 (%)"),
+        ("semantic_instability_auroc", "Semantic AUROC (%)"),
+        ("review_rate", "Review rate (%)"),
     )
     interventions = sorted({str(row["intervention"]) for row in aggregates})
     figure, axes = plt.subplots(2, 2, figsize=(10, 7))
@@ -240,12 +413,37 @@ def _plot_aggregates(
             for row in aggregates
             if row["metric"] == metric
         }
-        values = [metric_rows[name]["mean"] for name in interventions]
-        errors = [metric_rows[name]["sample_std"] or 0.0 for name in interventions]
-        axis.bar(interventions, values, yerr=errors, capsize=4)
+        values = [100.0 * metric_rows[name]["mean"] for name in interventions]
+        errors = [
+            100.0 * (metric_rows[name]["sample_std"] or 0.0)
+            for name in interventions
+        ]
+        positions = list(range(len(interventions)))
+        axis.bar(positions, values, yerr=errors, capsize=4, alpha=0.75)
+        for position, name in zip(positions, interventions):
+            seed_values = [
+                100.0 * float(row[metric])
+                for row in rows
+                if row["intervention"] == name and row.get(metric) is not None
+            ]
+            axis.scatter(
+                [position] * len(seed_values),
+                seed_values,
+                color="black",
+                marker="o",
+                s=24,
+                zorder=3,
+            )
         axis.set_title(title)
-        axis.tick_params(axis="x", rotation=20)
+        axis.set_xticks(positions, interventions, rotation=20)
         axis.set_ylim(bottom=0.0)
+        if metric in {"semantic_instability_auroc", "review_rate"}:
+            axis.set_ylim(0.0, 100.0)
+        axis.grid(axis="y", alpha=0.25)
+    figure.suptitle(
+        "Mean +/- sample SD; points are independent ensemble seeds",
+        fontsize=11,
+    )
     figure.tight_layout()
     figure.savefig(output_directory / "aggregate_metrics.png", dpi=180)
     plt.close(figure)
@@ -290,14 +488,19 @@ def main() -> int:
         allow_partial=args.allow_partial,
     )
     aggregates = aggregate_rows(rows)
+    model_rows, model_aggregates = aggregate_unique_models(rows)
     _write_csv(output_directory / "run_results.csv", rows)
     _write_csv(output_directory / "aggregate_results.csv", aggregates)
-    warning = _plot_aggregates(output_directory, aggregates)
+    _write_csv(output_directory / "model_results.csv", model_rows)
+    _write_csv(output_directory / "model_aggregate_results.csv", model_aggregates)
+    warning = _plot_aggregates(output_directory, aggregates, rows)
     payload = {
         "protocol_id": protocol.protocol_id,
         "protocol_sha256": protocol.sha256,
         "runs": rows,
         "aggregates": aggregates,
+        "unique_models": model_rows,
+        "model_aggregates": model_aggregates,
         "warning": warning,
     }
     (output_directory / "aggregate_results.json").write_text(

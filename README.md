@@ -111,10 +111,15 @@ After seeds 0, 10, and 20 are complete, validate and aggregate the matrix:
 python aggregate_metabears_results.py --results-root <results-root>
 ```
 
-The aggregator writes per-run and mean/standard-deviation CSV files,
-`aggregate_results.json`, and `aggregate_metrics.png` when Matplotlib is
-available. Incomplete or protocol-inconsistent matrices are rejected by
-default.
+The aggregator writes per-run and mean/standard-deviation CSV files with
+seed-level 95% Student-t confidence intervals, `aggregate_results.json`, and a
+percentage-scaled `aggregate_metrics.png` with individual seed points when
+Matplotlib is available. It also reports the accuracy drop normalized by the
+effective shuffled-patch mismatch rate. OOD metrics are additionally written
+to `model_results.csv` and `model_aggregate_results.csv`, deduplicated by
+checkpoint fingerprint so controls that reuse one ensemble are not counted as
+independent models. Incomplete or protocol-inconsistent matrices are rejected
+by default.
 
 Or train a fresh BEARS ensemble before evaluation:
 

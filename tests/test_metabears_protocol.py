@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aggregate_metabears_results import METRIC_FIELDS, aggregate_rows
+from aggregate_metabears_results import (
+    METRIC_FIELDS,
+    aggregate_rows,
+    aggregate_unique_models,
+    extract_run_row,
+)
 from metabears_matrix import build_experiment_command, expected_member_seeds
 from XOR_MNIST.metacog.protocol import (
     collect_run_provenance,
@@ -112,6 +117,54 @@ class MatrixRunnerTests(unittest.TestCase):
 
 
 class AggregationTests(unittest.TestCase):
+    def test_run_extraction_reports_prevalence_and_normalized_effect(self) -> None:
+        detection = {
+            "positive_count": 21,
+            "prevalence": 0.05,
+            "precision": 0.5,
+            "recall": 1.0,
+            "f1": 2.0 / 3.0,
+        }
+        summary = {
+            "configuration": {"seed": 10},
+            "intervention": {
+                "name": "patch_shuffled",
+                "id_test": {
+                    "samples": 420,
+                    "base_task_accuracy": 0.99,
+                    "perturbed_task_accuracy": 0.91,
+                    "input_assignment": {"effective_mismatch_rate": 0.4},
+                    "task_invariance_failure_shortcut_flags": detection,
+                    "semantic_instability_detection": {
+                        **detection,
+                        "auroc": 0.9,
+                        "average_precision": 0.4,
+                    },
+                },
+            },
+            "provenance": {
+                "git": {"commit": "abc"},
+                "dataset_artifacts": [
+                    {"exists": True, "sha256": "a" * 64}
+                ],
+                "checkpoints": [{"exists": True, "sha256": "b" * 64}],
+            },
+            "splits": {"id_test": {"review_rate": 0.6, "coverage": 0.4}},
+            "ood_detection": {
+                "auroc": 0.98,
+                "average_precision": 0.99,
+                "f1": 0.95,
+            },
+        }
+
+        row = extract_run_row(summary, Path("run_summary.json"))
+
+        self.assertEqual(row["id_samples"], 420)
+        self.assertEqual(row["task_failure_count"], 21)
+        self.assertEqual(row["semantic_instability_count"], 21)
+        self.assertAlmostEqual(row["task_failure_prevalence"], 0.05)
+        self.assertAlmostEqual(row["mismatch_normalized_accuracy_drop"], 0.2)
+
     def test_aggregation_reports_sample_standard_deviation(self) -> None:
         rows = []
         for seed, accuracy_drop in ((0, 0.1), (10, 0.2)):
@@ -131,6 +184,53 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(accuracy["n"], 2)
         self.assertAlmostEqual(accuracy["mean"], 0.15)
         self.assertAlmostEqual(accuracy["sample_std"], 0.0707106781)
+        self.assertAlmostEqual(accuracy["standard_error"], 0.05)
+        self.assertAlmostEqual(accuracy["ci95_low"], -0.4853102368)
+        self.assertAlmostEqual(accuracy["ci95_high"], 0.7853102368)
+        self.assertEqual(
+            accuracy["ci_method"],
+            "two-sided Student-t over independent seeds",
+        )
+
+    def test_ood_aggregation_deduplicates_shared_control_checkpoints(self) -> None:
+        rows = [
+            {
+                "seed": 0,
+                "intervention": intervention,
+                "git_commit": "abc",
+                "dataset_fingerprint": "dataset",
+                "checkpoint_fingerprint": "ensemble-0",
+                "ood_auroc": 0.9,
+                "ood_average_precision": 0.8,
+                "ood_f1": 0.7,
+            }
+            for intervention in ("patch_shuffled", "patch_removed")
+        ]
+
+        model_rows, aggregates = aggregate_unique_models(rows)
+
+        self.assertEqual(len(model_rows), 1)
+        auroc = next(row for row in aggregates if row["metric"] == "ood_auroc")
+        self.assertEqual(auroc["n"], 1)
+        self.assertEqual(auroc["mean"], 0.9)
+        self.assertIsNone(auroc["ci95_low"])
+
+    def test_ood_aggregation_rejects_inconsistent_shared_results(self) -> None:
+        rows = [
+            {
+                "seed": 0,
+                "git_commit": "abc",
+                "dataset_fingerprint": "dataset",
+                "checkpoint_fingerprint": "ensemble-0",
+                "ood_auroc": auroc,
+                "ood_average_precision": 0.8,
+                "ood_f1": 0.7,
+            }
+            for auroc in (0.9, 0.8)
+        ]
+
+        with self.assertRaisesRegex(ValueError, "inconsistent ood_auroc"):
+            aggregate_unique_models(rows)
 
 
 if __name__ == "__main__":
