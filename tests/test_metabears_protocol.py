@@ -10,7 +10,9 @@ from aggregate_metabears_results import (
     aggregate_detector_results,
     aggregate_unique_models,
     extract_run_row,
+    load_analysis_protocol,
     paired_control_analysis,
+    paired_detector_analysis,
     reporting_provenance,
 )
 from metabears_matrix import build_experiment_command, expected_member_seeds
@@ -23,6 +25,7 @@ from XOR_MNIST.metacog.protocol import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_PATH = REPO_ROOT / "experiment_protocol.json"
+ANALYSIS_PROTOCOL_PATH = REPO_ROOT / "analysis_protocol_v2.json"
 
 
 def valid_configuration() -> dict:
@@ -58,6 +61,17 @@ class FrozenProtocolTests(unittest.TestCase):
 
         self.assertEqual(protocol.protocol_id, "metabears-halfmnist-v1")
         self.assertEqual(len(protocol.sha256), 64)
+
+    def test_analysis_manifest_is_bound_to_frozen_protocol(self) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+
+        analysis = load_analysis_protocol(ANALYSIS_PROTOCOL_PATH, protocol)
+
+        self.assertEqual(
+            analysis.protocol_id, "metabears-validation-fusion-v2"
+        )
+        self.assertEqual(analysis.data["fit_split"], "validation")
+        self.assertFalse(analysis.data["test_labels_used_for_fitting"])
 
     def test_manifest_rejects_post_hoc_hyperparameter_changes(self) -> None:
         protocol = load_protocol(PROTOCOL_PATH)
@@ -296,10 +310,53 @@ class AggregationTests(unittest.TestCase):
     def test_reporting_provenance_hashes_analysis_sources(self) -> None:
         provenance = reporting_provenance(REPO_ROOT)
 
-        self.assertEqual(len(provenance["source_files"]), 2)
+        self.assertEqual(len(provenance["source_files"]), 3)
         self.assertTrue(
             all(len(record["sha256"]) == 64 for record in provenance["source_files"])
         )
+
+    def test_detector_comparisons_are_paired_within_seed(self) -> None:
+        rows = []
+        for seed, full_ap, baseline_ap in ((0, 0.6, 0.8), (10, 0.7, 0.9)):
+            for detector, average_precision in (
+                ("full_metabears", full_ap),
+                ("perturbation_js", baseline_ap),
+            ):
+                rows.append(
+                    {
+                        "seed": seed,
+                        "intervention": "patch_shuffled",
+                        "target": "task_invariance_failure",
+                        "detector": detector,
+                        "auroc": average_precision,
+                        "average_precision": average_precision,
+                        "aurc": 1.0 - average_precision,
+                        "risk_at_80_coverage": 1.0 - average_precision,
+                        "review_rate_at_95_recall": 1.0 - average_precision,
+                    }
+                )
+
+        paired, aggregates = paired_detector_analysis(
+            rows,
+            candidates=["full_metabears"],
+            baselines=["perturbation_js"],
+        )
+
+        self.assertEqual(
+            len(
+                [
+                    row
+                    for row in paired
+                    if row["metric"] == "average_precision"
+                ]
+            ),
+            2,
+        )
+        average_precision = next(
+            row for row in aggregates if row["metric"] == "average_precision"
+        )
+        self.assertAlmostEqual(average_precision["mean"], -0.2)
+        self.assertTrue(average_precision["higher_is_better"])
 
 
 if __name__ == "__main__":

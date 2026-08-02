@@ -1,0 +1,30 @@
+{
+  "protocol_id": "metabears-validation-fusion-v2",
+  "base_protocol_id": "metabears-halfmnist-v1",
+  "base_protocol_sha256": "2475895b327fb4d1f7dfe94beb4adbc92c2b1afd70097917f1047ed95ea529d6",
+  "description": "Validation-only post-hoc fusion of separated MetaBEARS risk channels using frozen Protocol-v1 prediction artifacts.",
+  "model_training": "none",
+  "fit_split": "validation",
+  "fit_intervention": "patch_shuffled",
+  "fit_target": "controlled_failure_union",
+  "evaluation_split": "id_test",
+  "signals": [
+    "perturbation_js",
+    "task_distribution_js",
+    "concept_instability_without_perturbation",
+    "task_uncertainty",
+    "label_disagreement"
+  ],
+  "normalization": "training-fold empirical midrank percentile",
+  "weight_grid_step": 0.1,
+  "cross_validation_folds": 5,
+  "selection_metric": "out_of_fold_average_precision",
+  "selection_tiebreakers": [
+    "out_of_fold_auroc",
+    "fewest_nonzero_weights",
+    "lexicographic_weights"
+  ],
+  "threshold_target_recall": 0.95,
+  "threshold_selection_split": "full validation",
+  "test_labels_used_for_fitting": false
+}

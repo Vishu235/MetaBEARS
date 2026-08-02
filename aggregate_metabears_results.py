@@ -17,7 +17,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from XOR_MNIST.metacog.posthoc import (
     DETECTOR_DESCRIPTIONS,
     TARGET_DEFINITIONS,
+    evaluate_fusion_result_directory,
     evaluate_result_directory,
+    fit_validation_fusion_from_result_directory,
 )
 from XOR_MNIST.metacog.protocol import (
     FrozenProtocol,
@@ -76,6 +78,22 @@ DETECTOR_AGGREGATE_METRICS = (
     "review_rate_at_95_recall",
 )
 
+DETECTOR_COMPARISON_METRICS = tuple(
+    metric for metric in DETECTOR_AGGREGATE_METRICS if metric != "prevalence"
+)
+
+DETECTOR_COMPARISON_BASELINES = (
+    "perturbation_js",
+    "task_distribution_js",
+    "concept_instability_with_perturbation",
+    "concept_instability_without_perturbation",
+)
+
+DETECTOR_COMPARISON_CANDIDATES = (
+    "full_metabears",
+    "validation_fitted_fusion_v2",
+)
+
 # Two-sided 95% Student-t critical values. Frozen experiments currently use
 # three independent seeds (two degrees of freedom), but the complete table
 # keeps partial and future reporting statistically well-defined.
@@ -121,6 +139,51 @@ def _nested(mapping: Mapping[str, Any], *keys: str) -> Any:
             return None
         value = value[key]
     return value
+
+
+def load_analysis_protocol(
+    path: Path, base_protocol: FrozenProtocol
+) -> FrozenProtocol:
+    """Load and validate the validation-only post-hoc analysis manifest."""
+
+    resolved = path.expanduser().resolve()
+    content = resolved.read_bytes()
+    data = json.loads(content.decode("utf-8"))
+    required = {
+        "protocol_id",
+        "base_protocol_id",
+        "base_protocol_sha256",
+        "fit_split",
+        "fit_intervention",
+        "fit_target",
+        "evaluation_split",
+        "signals",
+        "weight_grid_step",
+        "cross_validation_folds",
+        "threshold_target_recall",
+        "test_labels_used_for_fitting",
+    }
+    missing = sorted(required.difference(data))
+    if missing:
+        raise ValueError(
+            "Analysis protocol is missing required fields: " + ", ".join(missing)
+        )
+    if data["base_protocol_id"] != base_protocol.protocol_id:
+        raise ValueError("Analysis protocol references a different base protocol ID.")
+    if data["base_protocol_sha256"] != base_protocol.sha256:
+        raise ValueError("Analysis protocol references a different base protocol hash.")
+    if data["fit_split"] != "validation" or data["evaluation_split"] != "id_test":
+        raise ValueError("Analysis fitting must use validation and evaluate ID test.")
+    if data["test_labels_used_for_fitting"] is not False:
+        raise ValueError("Analysis protocol must prohibit test-label fitting.")
+    signals = data["signals"]
+    if not isinstance(signals, list) or not signals:
+        raise ValueError("Analysis protocol signals must be a non-empty list.")
+    return FrozenProtocol(
+        path=resolved,
+        data=data,
+        sha256=hashlib.sha256(content).hexdigest(),
+    )
 
 
 def _artifact_fingerprint(records: Any, *, name: str) -> str:
@@ -554,6 +617,7 @@ def reporting_provenance(repo_root: Path) -> Dict[str, Any]:
 
     source_paths = (
         repo_root / "aggregate_metabears_results.py",
+        repo_root / "analysis_protocol_v2.json",
         repo_root / "XOR_MNIST" / "metacog" / "posthoc.py",
     )
     package_versions = {}
@@ -622,6 +686,176 @@ def evaluate_detector_matrix(
         precision_recall.extend(analysis.precision_recall_curve)
         risk_coverage.extend(analysis.risk_coverage_curve)
     return metrics, precision_recall, risk_coverage
+
+
+def evaluate_validation_fusion_matrix(
+    rows: Sequence[Mapping[str, Any]],
+    analysis_protocol: FrozenProtocol,
+) -> tuple[
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+]:
+    """Fit on primary validation only, then score every untouched ID test."""
+
+    data = analysis_protocol.data
+    fit_intervention = str(data["fit_intervention"])
+    indexed = {
+        (int(row["seed"]), str(row["intervention"])): row for row in rows
+    }
+    seeds = sorted({int(row["seed"]) for row in rows})
+    metrics: List[Mapping[str, Any]] = []
+    precision_recall: List[Mapping[str, Any]] = []
+    risk_coverage: List[Mapping[str, Any]] = []
+    model_records: List[Mapping[str, Any]] = []
+    threshold_records: List[Mapping[str, Any]] = []
+    for seed in seeds:
+        fit_row = indexed.get((seed, fit_intervention))
+        if fit_row is None:
+            raise ValueError(
+                f"Seed {seed} is missing fusion fit intervention {fit_intervention}."
+            )
+        fit_directory = Path(str(fit_row["summary_path"])).parent
+        model = fit_validation_fusion_from_result_directory(
+            fit_directory,
+            signal_names=list(data["signals"]),
+            target_name=str(data["fit_target"]),
+            weight_grid_step=float(data["weight_grid_step"]),
+            cross_validation_folds=int(data["cross_validation_folds"]),
+            threshold_target_recall=float(data["threshold_target_recall"]),
+            seed=seed,
+        )
+        model_records.append(
+            {
+                "seed": seed,
+                "fit_intervention": fit_intervention,
+                "analysis_protocol_id": analysis_protocol.protocol_id,
+                "analysis_protocol_sha256": analysis_protocol.sha256,
+                **model.to_record(),
+            }
+        )
+        for row in rows:
+            if int(row["seed"]) != seed:
+                continue
+            result = evaluate_fusion_result_directory(
+                model,
+                Path(str(row["summary_path"])).parent,
+                seed=seed,
+                intervention=str(row["intervention"]),
+            )
+            metrics.extend(result.analysis.metrics)
+            precision_recall.extend(result.analysis.precision_recall_curve)
+            risk_coverage.extend(result.analysis.risk_coverage_curve)
+            threshold_records.extend(result.threshold_metrics)
+    return (
+        metrics,
+        precision_recall,
+        risk_coverage,
+        model_records,
+        threshold_records,
+    )
+
+
+def paired_detector_analysis(
+    detector_rows: Sequence[Mapping[str, Any]],
+    *,
+    candidates: Sequence[str] = DETECTOR_COMPARISON_CANDIDATES,
+    baselines: Sequence[str] = DETECTOR_COMPARISON_BASELINES,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Compute paired within-seed candidate-minus-baseline detector effects."""
+
+    indexed = {
+        (
+            int(row["seed"]),
+            str(row["intervention"]),
+            str(row["target"]),
+            str(row["detector"]),
+        ): row
+        for row in detector_rows
+    }
+    seeds = sorted({int(row["seed"]) for row in detector_rows})
+    interventions = sorted({str(row["intervention"]) for row in detector_rows})
+    targets = sorted({str(row["target"]) for row in detector_rows})
+    paired_rows: List[Dict[str, Any]] = []
+    for seed in seeds:
+        for intervention in interventions:
+            for target in targets:
+                for candidate in candidates:
+                    candidate_row = indexed.get(
+                        (seed, intervention, target, candidate)
+                    )
+                    if candidate_row is None:
+                        continue
+                    for baseline in baselines:
+                        baseline_row = indexed.get(
+                            (seed, intervention, target, baseline)
+                        )
+                        if baseline_row is None:
+                            continue
+                        for metric in DETECTOR_COMPARISON_METRICS:
+                            candidate_value = candidate_row.get(metric)
+                            baseline_value = baseline_row.get(metric)
+                            if candidate_value is None or baseline_value is None:
+                                continue
+                            paired_rows.append(
+                                {
+                                    "seed": seed,
+                                    "intervention": intervention,
+                                    "target": target,
+                                    "candidate": candidate,
+                                    "baseline": baseline,
+                                    "metric": metric,
+                                    "higher_is_better": metric
+                                    in {"auroc", "average_precision"},
+                                    "candidate_value": float(candidate_value),
+                                    "baseline_value": float(baseline_value),
+                                    "paired_difference": float(candidate_value)
+                                    - float(baseline_value),
+                                }
+                            )
+
+    aggregate_rows_output: List[Dict[str, Any]] = []
+    groups = sorted(
+        {
+            (
+                str(row["intervention"]),
+                str(row["target"]),
+                str(row["candidate"]),
+                str(row["baseline"]),
+                str(row["metric"]),
+            )
+            for row in paired_rows
+        }
+    )
+    for intervention, target, candidate, baseline, metric in groups:
+        selected = [
+            row
+            for row in paired_rows
+            if row["intervention"] == intervention
+            and row["target"] == target
+            and row["candidate"] == candidate
+            and row["baseline"] == baseline
+            and row["metric"] == metric
+        ]
+        aggregate = _aggregate_values(
+            [float(row["paired_difference"]) for row in selected],
+            grouping_key="comparison",
+            grouping_value=f"{candidate}_minus_{baseline}",
+            metric=metric,
+        )
+        aggregate.update(
+            {
+                "intervention": intervention,
+                "target": target,
+                "candidate": candidate,
+                "baseline": baseline,
+                "higher_is_better": selected[0]["higher_is_better"],
+            }
+        )
+        aggregate_rows_output.append(aggregate)
+    return paired_rows, aggregate_rows_output
 
 
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
@@ -807,16 +1041,26 @@ def _plot_detector_comparison(
 
     detectors = (
         "task_entropy",
+        "task_distribution_js",
         "ensemble_concept_disagreement",
         "concept_instability_without_perturbation",
         "perturbation_js",
         "full_metabears",
+        "validation_fitted_fusion_v2",
     )
-    labels = ("Task entropy", "Concept JS", "Base instability", "Perturbation JS", "MetaBEARS")
+    labels = (
+        "Task entropy",
+        "Task-change JS",
+        "Concept JS",
+        "Base instability",
+        "Perturbation JS",
+        "MetaBEARS v1",
+        "Validation fusion v2",
+    )
     targets = ("task_invariance_failure", "semantic_instability")
     interventions = sorted({str(row["intervention"]) for row in detector_rows})
     figure, axes = plt.subplots(
-        len(targets), len(interventions), figsize=(13, 7), squeeze=False
+        len(targets), len(interventions), figsize=(15, 7.5), squeeze=False
     )
     for target_index, target in enumerate(targets):
         for intervention_index, intervention in enumerate(interventions):
@@ -870,12 +1114,13 @@ def _plot_detector_curves(
         return "matplotlib is unavailable; detector curves were skipped."
 
     detectors = (
-        "task_entropy",
+        "task_distribution_js",
         "concept_instability_without_perturbation",
         "perturbation_js",
         "full_metabears",
+        "validation_fitted_fusion_v2",
     )
-    colors = ("#7f7f7f", "#ff7f0e", "#2ca02c", "#1f77b4")
+    colors = ("#7f7f7f", "#ff7f0e", "#2ca02c", "#1f77b4", "#d62728")
     target = "task_invariance_failure"
     figure, axes = plt.subplots(1, 2, figsize=(11, 4.5))
     for detector, color in zip(detectors, colors):
@@ -990,6 +1235,9 @@ def parse_args() -> argparse.Namespace:
         description="Validate and aggregate a frozen MetaBEARS result matrix."
     )
     parser.add_argument("--protocol", default="experiment_protocol.json")
+    parser.add_argument(
+        "--analysis-protocol", default="analysis_protocol_v2.json"
+    )
     parser.add_argument("--results-root", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--seeds", type=int, nargs="+", default=None)
@@ -1007,6 +1255,9 @@ def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent
     protocol = load_protocol(repo_root / args.protocol)
+    analysis_protocol = load_analysis_protocol(
+        repo_root / args.analysis_protocol, protocol
+    )
     results_root = Path(args.results_root).expanduser().resolve()
     output_directory = (
         Path(args.output_dir).expanduser().resolve()
@@ -1039,17 +1290,42 @@ def main() -> int:
         primary_intervention=evaluation["primary_intervention"],
         comparator_interventions=secondary_interventions,
     )
-    detector_rows: Sequence[Mapping[str, Any]] = []
-    detector_aggregates: Sequence[Mapping[str, Any]] = []
-    precision_recall_rows: Sequence[Mapping[str, Any]] = []
-    risk_coverage_rows: Sequence[Mapping[str, Any]] = []
+    if (
+        analysis_protocol.data["fit_intervention"]
+        != evaluation["primary_intervention"]
+    ):
+        raise ValueError(
+            "Analysis fusion must fit the frozen primary intervention."
+        )
+    detector_rows: List[Mapping[str, Any]] = []
+    detector_aggregates: List[Mapping[str, Any]] = []
+    precision_recall_rows: List[Mapping[str, Any]] = []
+    risk_coverage_rows: List[Mapping[str, Any]] = []
+    fusion_model_records: List[Mapping[str, Any]] = []
+    fusion_threshold_records: List[Mapping[str, Any]] = []
+    detector_paired_rows: List[Dict[str, Any]] = []
+    detector_paired_aggregates: List[Dict[str, Any]] = []
     if not args.skip_detector_analysis:
         (
             detector_rows,
             precision_recall_rows,
             risk_coverage_rows,
         ) = evaluate_detector_matrix(rows)
+        (
+            fusion_rows,
+            fusion_precision_recall,
+            fusion_risk_coverage,
+            fusion_model_records,
+            fusion_threshold_records,
+        ) = evaluate_validation_fusion_matrix(rows, analysis_protocol)
+        detector_rows.extend(fusion_rows)
+        precision_recall_rows.extend(fusion_precision_recall)
+        risk_coverage_rows.extend(fusion_risk_coverage)
         detector_aggregates = aggregate_detector_results(detector_rows)
+        (
+            detector_paired_rows,
+            detector_paired_aggregates,
+        ) = paired_detector_analysis(detector_rows)
 
     provenance = reporting_provenance(repo_root)
     _write_csv(output_directory / "run_results.csv", rows)
@@ -1074,6 +1350,21 @@ def main() -> int:
         _write_csv(
             output_directory / "detector_risk_coverage_curves.csv",
             risk_coverage_rows,
+        )
+        _write_csv(
+            output_directory / "fusion_v2_models.csv", fusion_model_records
+        )
+        _write_csv(
+            output_directory / "fusion_v2_threshold_results.csv",
+            fusion_threshold_records,
+        )
+        _write_csv(
+            output_directory / "detector_paired_results.csv",
+            detector_paired_rows,
+        )
+        _write_csv(
+            output_directory / "detector_paired_aggregate_results.csv",
+            detector_paired_aggregates,
         )
     (output_directory / "reporting_provenance.json").write_text(
         json.dumps(provenance, indent=2, sort_keys=True),
@@ -1101,6 +1392,9 @@ def main() -> int:
     payload = {
         "protocol_id": protocol.protocol_id,
         "protocol_sha256": protocol.sha256,
+        "analysis_protocol_id": analysis_protocol.protocol_id,
+        "analysis_protocol_sha256": analysis_protocol.sha256,
+        "analysis_protocol": analysis_protocol.data,
         "reporting_provenance": provenance,
         "runs": rows,
         "aggregates": aggregates,
@@ -1114,6 +1408,10 @@ def main() -> int:
             "target_definitions": TARGET_DEFINITIONS,
             "results": detector_rows,
             "aggregates": detector_aggregates,
+            "paired_results": detector_paired_rows,
+            "paired_aggregates": detector_paired_aggregates,
+            "fusion_models": fusion_model_records,
+            "fusion_threshold_results": fusion_threshold_records,
             "curve_files": (
                 {
                     "precision_recall": "detector_precision_recall_curves.csv",

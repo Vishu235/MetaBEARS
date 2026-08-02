@@ -10,7 +10,11 @@ from aggregate_metabears_results import evaluate_detector_matrix
 from XOR_MNIST.metacog.posthoc import (
     detector_scores_and_targets,
     evaluate_detector_arrays,
+    evaluate_fusion_arrays,
+    evaluate_fusion_result_directory,
     evaluate_result_directory,
+    fit_validation_fusion,
+    fit_validation_fusion_from_result_directory,
     precision_recall_curve,
     risk_coverage_curve,
 )
@@ -73,7 +77,12 @@ class DetectorTargetTests(unittest.TestCase):
         )
         self.assertIn("full_metabears", scores)
         self.assertIn("perturbation_js", scores)
-        self.assertEqual(len(scores), 9)
+        self.assertIn("task_distribution_js", scores)
+        self.assertEqual(len(scores), 10)
+        np.testing.assert_array_equal(
+            targets["controlled_failure_union"],
+            np.array([True, True, False, False]),
+        )
 
     def test_curves_have_expected_endpoints(self) -> None:
         scores = np.array([0.9, 0.8, 0.2, 0.1])
@@ -90,7 +99,7 @@ class DetectorTargetTests(unittest.TestCase):
     def test_evaluates_each_detector_against_both_targets(self) -> None:
         analysis = evaluate_detector_arrays(*prediction_pair())
 
-        self.assertEqual(len(analysis.metrics), 18)
+        self.assertEqual(len(analysis.metrics), 30)
         full_semantic = next(
             row
             for row in analysis.metrics
@@ -159,9 +168,59 @@ class DetectorTargetTests(unittest.TestCase):
                 rows
             )
 
-        self.assertEqual(len(metrics), 18)
+        self.assertEqual(len(metrics), 30)
         self.assertTrue(precision_recall)
         self.assertTrue(risk_coverage)
+
+    def test_validation_fusion_fits_without_test_labels(self) -> None:
+        base, perturbed = prediction_pair()
+
+        model = fit_validation_fusion(
+            base,
+            perturbed,
+            signal_names=(
+                "perturbation_js",
+                "task_distribution_js",
+                "concept_instability_without_perturbation",
+            ),
+            cross_validation_folds=2,
+            seed=7,
+        )
+        held_out = evaluate_fusion_arrays(model, base, perturbed)
+
+        self.assertAlmostEqual(float(model.weights.sum()), 1.0)
+        self.assertEqual(model.cross_validation_folds, 2)
+        self.assertGreaterEqual(model.validation_recall, 0.95)
+        self.assertEqual(len(held_out.analysis.metrics), 3)
+        self.assertEqual(len(held_out.threshold_metrics), 3)
+
+    def test_validation_fusion_uses_saved_validation_then_id_test(self) -> None:
+        base, perturbed = prediction_pair()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory)
+            np.savez_compressed(output / "validation_predictions.npz", **base)
+            np.savez_compressed(
+                output / "validation_intervention_predictions.npz", **perturbed
+            )
+            np.savez_compressed(output / "id_test_predictions.npz", **base)
+            np.savez_compressed(
+                output / "id_test_intervention_predictions.npz", **perturbed
+            )
+            model = fit_validation_fusion_from_result_directory(
+                output,
+                signal_names=("perturbation_js", "task_distribution_js"),
+                cross_validation_folds=2,
+                seed=3,
+            )
+            result = evaluate_fusion_result_directory(
+                model,
+                output,
+                seed=3,
+                intervention="patch_shuffled",
+            )
+
+        self.assertEqual(len(result.analysis.metrics), 3)
+        self.assertTrue(all(row["seed"] == 3 for row in result.analysis.metrics))
 
 
 if __name__ == "__main__":

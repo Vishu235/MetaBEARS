@@ -139,6 +139,18 @@ tuned on test labels. The additional outputs are:
 - `reporting_provenance.json`, which records the reporting Git commit,
   command, environment, and SHA-256 hashes of the analysis source files.
 
+The validation-fitted fusion is separately frozen in
+`analysis_protocol_v2.json`. For each ensemble seed, it fits non-negative
+weights on the `patch_shuffled` validation intervention using stratified
+out-of-fold average precision, freezes empirical percentile references and a
+95%-validation-recall threshold, and then applies that unchanged model to both
+ID-test controls. It adds task-distribution Jensen-Shannon change as a direct
+invariance signal and never uses ID-test labels for fitting. Its model weights,
+held-out threshold metrics, and paired baseline comparisons are written to
+`fusion_v2_models.csv`, `fusion_v2_threshold_results.csv`,
+`detector_paired_results.csv`, and
+`detector_paired_aggregate_results.csv`.
+
 For a deliberately summary-only aggregation that does not have the `.npz`
 prediction artifacts, add `--skip-detector-analysis`.
 

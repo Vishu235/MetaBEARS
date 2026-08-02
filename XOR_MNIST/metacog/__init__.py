@@ -42,10 +42,16 @@ from .experiment import (
 )
 from .report import MetaCognitiveReport, build_meta_cognitive_report
 from .posthoc import (
+    FusionRunAnalysis,
     PosthocRunAnalysis,
+    ValidationFusionModel,
     detector_scores_and_targets,
     evaluate_detector_arrays,
+    evaluate_fusion_arrays,
+    evaluate_fusion_result_directory,
     evaluate_result_directory,
+    fit_validation_fusion,
+    fit_validation_fusion_from_result_directory,
     precision_recall_curve,
     risk_coverage_curve,
 )
@@ -58,7 +64,9 @@ __all__ = [
     "MetaBEARSExperimentResult",
     "MetaCognitiveReport",
     "PredictionIntervention",
+    "FusionRunAnalysis",
     "PosthocRunAnalysis",
+    "ValidationFusionModel",
     "ThresholdSelection",
     "HALFMNIST_HALF_SWAP",
     "HALFMNIST_PATCH_CONFLICT",
@@ -78,7 +86,11 @@ __all__ = [
     "ensemble_nearest_reference_distances",
     "detector_scores_and_targets",
     "evaluate_detector_arrays",
+    "evaluate_fusion_arrays",
+    "evaluate_fusion_result_directory",
     "evaluate_result_directory",
+    "fit_validation_fusion",
+    "fit_validation_fusion_from_result_directory",
     "familiarity_from_reference",
     "get_intervention",
     "neutralize_halfmnist_label_patch",
