@@ -1,0 +1,94 @@
+{
+  "freeze_id": "metabears-phase2-negative-control-v5",
+  "status": "frozen",
+  "frozen_at_utc": "2026-08-02T16:00:14.0561453Z",
+  "artifact": {
+    "filename": "aggregate_half_swap_v5_seed42.zip",
+    "size_bytes": 9224741,
+    "sha256": "8106b416fcb0266e8e759c01e0c9929be192f3ec644313c6ba44c5b4c7583bf8",
+    "storage_policy": "external_not_tracked_in_git"
+  },
+  "lineage": {
+    "primary_results_freeze_file": "results_freeze_v4.json",
+    "primary_results_freeze_id": "metabears-phase2-results-v4",
+    "primary_results_artifact_sha256": "53e0534aed40c6085130604c7202463fb8f89f5eae7b696cf442b82a1bce106f",
+    "scope": "post-freeze negative-control extension; does not replace v4 performance evidence"
+  },
+  "base_protocol": {
+    "id": "metabears-halfmnist-v1",
+    "sha256": "2475895b327fb4d1f7dfe94beb4adbc92c2b1afd70097917f1047ed95ea529d6"
+  },
+  "analysis_protocol": {
+    "id": "metabears-half-swap-negative-control-v5",
+    "sha256": "175dfd02d4e464eb47dc96830885f711c3ee5b9e54af1cf9a44a295c707c8ce3"
+  },
+  "aggregate_provenance": {
+    "generated_at_utc": "2026-08-02T15:32:24.928412+00:00",
+    "git_commit": "570091ddf79b7ccb01bcbdb9eec722dea920d200",
+    "git_dirty": false,
+    "warning_count": 0,
+    "source_files": {
+      "aggregate_metabears_results.py": "748c4254217e85f672e34c6083c3ea1c1ba7884718f8904d16b33123069a1026",
+      "analysis_protocol_v2.json": "fa8e2cf58be5d5dd213b8db91ca21f7c538c12a452534dd710165dd73198e422",
+      "analysis_protocol_v3.json": "35301b1d26788c8e0a2dfdd2da60614cad7a01322166ddecf9fe26ec97f0e5f6",
+      "analysis_protocol_v4.json": "40ee1b30db109da62134d36c89b011716efa44837942e243664511e696db4198",
+      "analysis_protocol_v5.json": "175dfd02d4e464eb47dc96830885f711c3ee5b9e54af1cf9a44a295c707c8ce3",
+      "XOR_MNIST/metacog/posthoc.py": "ba4da8d1fbfd09b3ad868b94c8854f9a387adc6259cd3b0e2024f2de713f3cf5"
+    }
+  },
+  "run_matrix": {
+    "run_count": 15,
+    "primary_patch_run_count": 12,
+    "negative_control_run_count": 3,
+    "seeds": [
+      0,
+      10,
+      20
+    ],
+    "interventions": [
+      "patch_shuffled",
+      "patch_removed",
+      "patch_conflict",
+      "patch_neutral",
+      "half_swap"
+    ],
+    "negative_control_run_generation_commit": "1ab73024808b690aa2539ace0ae003bc19222716"
+  },
+  "negative_control": {
+    "name": "half_swap",
+    "label_preserving_reason": "HalfMNIST addition is commutative; concept axes are realigned before comparison.",
+    "fit_policy": "weights, empirical references, and thresholds fitted on the four patch-intervention validation artifacts only",
+    "validation_used_for_fitting": false,
+    "id_samples_per_seed": 420,
+    "observed_paired_sample_evaluations": 1260,
+    "observed_mean_base_task_accuracy": 0.9936507936507937,
+    "observed_mean_swapped_task_accuracy": 0.9936507936507937,
+    "observed_accuracy_drop": 0.0,
+    "observed_task_failure_count": 0,
+    "observed_semantic_instability_count": 0,
+    "observed_v5_flagged_count": 0,
+    "observed_v5_review_rate": 0.0,
+    "undefined_ranking_metrics": [
+      "auroc",
+      "average_precision"
+    ],
+    "undefined_reason": "No positive controlled failures occurred in any half_swap ID-test run."
+  },
+  "integrity_checks": {
+    "single_raw_dataset_fingerprint_across_all_runs": true,
+    "dataset_equivalence_policy": "raw_artifact_sha256",
+    "single_checkpoint_fingerprint_per_seed_across_interventions": true,
+    "all_expected_seed_intervention_runs_present": true,
+    "aggregate_generated_from_clean_worktree": true,
+    "aggregate_has_no_warnings": true,
+    "v4_model_table_byte_identical": true,
+    "v4_threshold_table_byte_identical": true
+  },
+  "freeze_policy": {
+    "primary_evidence_for_negative_control": true,
+    "replaces_primary_v4_evidence": false,
+    "post_freeze_tuning_on_these_test_results": false,
+    "new_experiments_require_new_versioned_protocol": true,
+    "reporting_only_derivations_must_preserve_this_artifact_hash": true
+  }
+}

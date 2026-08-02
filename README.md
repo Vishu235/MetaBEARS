@@ -223,6 +223,17 @@ artifacts. The added outputs are `fusion_v5_models.csv` and
 and aligned semantic failure prevalence, with the observed review rate reported
 without post-hoc adjustment.
 
+The completed negative-control extension is frozen by
+`results_freeze_v5.json` and tagged `metabears-results-v5`. Its external result
+archive is `aggregate_half_swap_v5_seed42.zip` with SHA-256
+`8106b416fcb0266e8e759c01e0c9929be192f3ec644313c6ba44c5b4c7583bf8`.
+Across three seeds and 1,260 paired ID-test sample evaluations, `half_swap` produced
+zero task failures, zero aligned semantic-instability events, zero accuracy
+drop, and zero v5 review flags. Because the control has no positive failures,
+its AUROC and average precision are undefined rather than zero. This v5 freeze
+is specificity evidence and does not replace the primary v4 performance
+archive.
+
 If a fresh runtime reserializes the HalfMNIST source artifact, its file-level
 SHA-256 can differ from the frozen runtime. V5 does not blindly bypass that
 check. It accepts the control only when labels, concepts, and batch boundaries
