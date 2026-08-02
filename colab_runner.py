@@ -250,6 +250,8 @@ def metabears_halfmnist(args):
         command.append("--train-ensemble")
     if args.metabears_real_kl:
         command.append("--real-kl")
+    if args.metabears_shortcut_patch_training:
+        command.append("--shortcut-patch-training")
     if args.metabears_max_batches is not None:
         command.extend(["--max-batches", str(args.metabears_max_batches)])
     if args.halfmnist_preset == "repo-best":
@@ -461,8 +463,12 @@ def parse_args():
     parser.add_argument("--metabears-max-batches", type=int, default=None)
     parser.add_argument(
         "--metabears-intervention",
-        choices=["none", "half_swap"],
+        choices=["none", "half_swap", "patch_neutral", "patch_conflict"],
         default="none",
+    )
+    parser.add_argument(
+        "--metabears-shortcut-patch-training",
+        action="store_true",
     )
     parser.add_argument("--ece-bins", type=int, default=15)
     parser.add_argument("--n-ensembles", type=int, default=5)

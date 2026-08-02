@@ -66,8 +66,22 @@ python colab_runner.py --job metabears_halfmnist --metabears-checkpoints <member
 
 The intervention exchanges the two HalfMNIST digits, preserves the addition
 label, and aligns the predicted concept positions back before measuring
-semantic consistency. Its behavioral proxies are reported separately from
-causal shortcut claims.
+semantic consistency. Because the shared encoder and symbolic addition rule
+are permutation invariant, this is retained as a negative control.
+
+Train a controlled shortcut ensemble with a task-correlated canonical-pair
+patch, then contradict only that patch at evaluation time:
+
+```powershell
+python colab_runner.py --job metabears_halfmnist --metabears-train-ensemble --metabears-shortcut-patch-training --metabears-intervention patch_conflict --halfmnist-preset paper --n-ensembles 5 --seed 0
+```
+
+The patch encodes two pseudo-digits whose symbolic sum equals the task label.
+The conflicting intervention encodes an incorrect sum while leaving the
+visible digits and ground-truth label unchanged. Checkpoint names include a
+`shortcut-patch-True` suffix so controlled models cannot overwrite ordinary
+BEARS members. Behavioral proxies remain explicitly separated from claims
+about the model's internal causal mechanism.
 
 Or train a fresh BEARS ensemble before evaluation:
 

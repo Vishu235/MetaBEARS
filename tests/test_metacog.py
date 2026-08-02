@@ -10,6 +10,7 @@ import numpy as np
 
 from XOR_MNIST.metacog import (
     align_swapped_concept_probabilities,
+    apply_halfmnist_label_patch,
     build_meta_cognitive_report,
     collect_ensemble_predictions,
     ensemble_leave_one_out_reference_distances,
@@ -77,6 +78,42 @@ class HalfMNISTInterventionTests(unittest.TestCase):
     def test_half_swap_rejects_odd_width(self) -> None:
         with self.assertRaisesRegex(ValueError, "even"):
             swap_halfmnist_image_halves(np.zeros((1, 1, 3, 5)))
+
+    def test_correlated_patch_encodes_canonical_pair(self) -> None:
+        images = np.zeros((1, 1, 28, 56), dtype=np.float32)
+
+        patched = apply_halfmnist_label_patch(
+            images, np.array([3]), mode="correlated"
+        )
+
+        starts = [1, 5, 9, 13, 17]
+        left_values = [patched[0, 0, 1:4, start : start + 3].mean() for start in starts]
+        right_values = [
+            patched[0, 0, 1:4, 28 + start : 28 + start + 3].mean()
+            for start in starts
+        ]
+        np.testing.assert_array_equal(left_values, [0, 1, 0, 0, 0])
+        np.testing.assert_array_equal(right_values, [0, 0, 1, 0, 0])
+
+    def test_conflicting_patch_encodes_wrong_sum(self) -> None:
+        images = np.zeros((1, 1, 28, 56), dtype=np.float32)
+
+        patched = apply_halfmnist_label_patch(
+            images, np.array([3]), mode="conflict"
+        )
+
+        self.assertEqual(patched[0, 0, 1:4, 9:12].mean(), 1.0)
+        self.assertEqual(patched[0, 0, 1:4, 37:40].mean(), 1.0)
+
+    def test_neutral_patch_removes_label_information(self) -> None:
+        images = np.zeros((1, 1, 28, 56), dtype=np.float32)
+
+        patched = apply_halfmnist_label_patch(
+            images, np.array([8]), mode="neutral"
+        )
+
+        self.assertEqual(patched[0, 0, 1:4, 1:4].mean(), 0.5)
+        self.assertEqual(patched[0, 0, 1:4, 29:32].mean(), 0.5)
 
 
 class FakeBEARSModel:
@@ -281,6 +318,18 @@ class ConceptConsistencyTests(unittest.TestCase):
         self.assertAlmostEqual(result.ensemble_js[0], 0.0, places=10)
         self.assertGreater(result.perturbation_js[0], 0.3)
         self.assertLess(result.score[0], 0.9)
+
+    def test_stable_perturbation_does_not_dilute_base_instability(self) -> None:
+        concepts = stable_concepts(samples=1)
+        inject_shortcut_vote_split(concepts, sample=0)
+        perturbed = concepts[:, :, np.newaxis, :, :].copy()
+
+        base_result = probe_concept_consistency(concepts)
+        perturbed_result = probe_concept_consistency(
+            concepts, perturbed_member_probabilities=perturbed
+        )
+
+        np.testing.assert_allclose(perturbed_result.score, base_result.score)
 
     def test_invalid_probability_distribution_is_rejected(self) -> None:
         concepts = stable_concepts()

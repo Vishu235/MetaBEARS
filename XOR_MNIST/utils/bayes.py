@@ -1290,10 +1290,16 @@ def deep_ensemble(
         model.eval()
 
         if args.checkout is not None:
+            checkpoint_stem = (
+                f"data/ckpts/deepens_dset-{args.dataset}-"
+                f"bears-{separate_from_others}-model-{args.model}-"
+                f"seed-ensmember-{seed}-joint-{args.joint}"
+            )
             if args.real_kl:
-                PATH = f"data/ckpts/deepens_dset-{args.dataset}-bears-{separate_from_others}-model-{args.model}-seed-ensmember-{seed}-joint-{args.joint}-real-kl-{args.real_kl}.pt"
-            else:
-                PATH = f"data/ckpts/deepens_dset-{args.dataset}-bears-{separate_from_others}-model-{args.model}-seed-ensmember-{seed}-joint-{args.joint}.pt"
+                checkpoint_stem += f"-real-kl-{args.real_kl}"
+            if getattr(args, "shortcut_patch_training", False):
+                checkpoint_stem += "-shortcut-patch-True"
+            PATH = checkpoint_stem + ".pt"
             torch.save(model.state_dict(), PATH)
 
         # freeze the parameters of the model in the ensemble

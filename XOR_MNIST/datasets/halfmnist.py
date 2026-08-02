@@ -27,6 +27,14 @@ class HALFMNIST(BaseDataset):
             dataset_train, dataset_val, dataset_test
         )
 
+        if getattr(self.args, "shortcut_patch_training", False):
+            from metacog.interventions import HalfMNISTLabelPatchDataset
+
+            dataset_train = HalfMNISTLabelPatchDataset(dataset_train)
+            dataset_val = HalfMNISTLabelPatchDataset(dataset_val)
+            dataset_test = HalfMNISTLabelPatchDataset(dataset_test)
+            ood_test = HalfMNISTLabelPatchDataset(ood_test)
+
         self.dataset_train = dataset_train
         self.dataset_val = dataset_val
         self.dataset_test = dataset_test

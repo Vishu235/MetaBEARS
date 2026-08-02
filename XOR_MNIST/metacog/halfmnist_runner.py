@@ -113,11 +113,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--intervention",
-        choices=["none", "half_swap"],
+        choices=["none", "half_swap", "patch_neutral", "patch_conflict"],
         default="none",
         help=(
             "Optional label-preserving controlled intervention. half_swap "
-            "exchanges the two digits and aligns concept positions back."
+            "exchanges the two digits; patch_neutral and patch_conflict "
+            "replace the task-correlated patch and require "
+            "--shortcut-patch-training."
+        ),
+    )
+    parser.add_argument(
+        "--shortcut-patch-training",
+        action="store_true",
+        help=(
+            "Inject a task-correlated canonical-pair patch into HalfMNIST "
+            "training, validation, ID-test, and OOD-test inputs."
         ),
     )
     parser.add_argument(
@@ -137,6 +147,8 @@ def _checkpoint_filename(args: argparse.Namespace, seed: int) -> str:
     )
     if args.real_kl:
         stem += f"-real-kl-{args.real_kl}"
+    if getattr(args, "shortcut_patch_training", False):
+        stem += "-shortcut-patch-True"
     return stem + ".pt"
 
 
@@ -262,6 +274,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("Use either --train-ensemble or --ensemble-checkpoints, not both.")
     if args.ece_bins < 2:
         parser.error("--ece-bins must be at least 2.")
+    if args.intervention.startswith("patch_") and not args.shortcut_patch_training:
+        parser.error(
+            "Patch interventions require --shortcut-patch-training so the "
+            "base inputs and checkpoints use the correlated patch."
+        )
 
     checkpoint_paths: Sequence[Path] = []
     if not args.train_ensemble:
@@ -323,6 +340,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "lambda_h": args.lambda_h,
         "intervention": args.intervention,
         "ece_bins": args.ece_bins,
+        "shortcut_patch_training": args.shortcut_patch_training,
+        "shortcut_patch_size": 3 if args.shortcut_patch_training else None,
     }
     result = run_metabears_experiment(
         ensemble,

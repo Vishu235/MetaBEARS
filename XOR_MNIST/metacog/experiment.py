@@ -185,15 +185,39 @@ def _detection_metrics(
     risk_scores: np.ndarray,
     labels: np.ndarray,
 ) -> Dict[str, Any]:
-    metrics = _classification_metrics(flags, labels)
     actual = np.asarray(labels, dtype=bool)
+    metrics = _classification_metrics(flags, actual)
     metrics["prevalence"] = float(actual.mean()) if actual.size else 0.0
-    if np.any(actual) and np.any(~actual):
+    metrics["evaluable"] = bool(np.any(actual) and np.any(~actual))
+    if metrics["evaluable"]:
+        metrics["non_evaluable_reason"] = None
         metrics["auroc"] = _binary_auroc(risk_scores, actual)
         metrics["average_precision"] = _average_precision(risk_scores, actual)
     else:
+        metrics["non_evaluable_reason"] = (
+            "no positive examples" if not np.any(actual) else "no negative examples"
+        )
         metrics["auroc"] = None
         metrics["average_precision"] = None
+    return metrics
+
+
+def _flag_detection_metrics(
+    flags: np.ndarray, labels: np.ndarray
+) -> Dict[str, Any]:
+    actual = np.asarray(labels, dtype=bool)
+    metrics = _classification_metrics(flags, actual)
+    metrics["prevalence"] = float(actual.mean()) if actual.size else 0.0
+    metrics["evaluable"] = bool(np.any(actual) and np.any(~actual))
+    metrics["non_evaluable_reason"] = (
+        None
+        if metrics["evaluable"]
+        else (
+            "no positive examples"
+            if not np.any(actual)
+            else "no negative examples"
+        )
+    )
     return metrics
 
 
@@ -655,10 +679,10 @@ def _intervention_metrics(
             report.shortcut_risk,
             semantic_instability_proxy,
         ),
-        "task_invariance_failure_shortcut_flags": _classification_metrics(
+        "task_invariance_failure_shortcut_flags": _flag_detection_metrics(
             report.shortcut_flag, task_invariance_failure
         ),
-        "task_invariance_failure_review_flags": _classification_metrics(
+        "task_invariance_failure_review_flags": _flag_detection_metrics(
             report.review_flag, task_invariance_failure
         ),
         "concept_equivariance_break_detection": _detection_metrics(
@@ -917,9 +941,9 @@ def run_metabears_experiment(
                 "validation split."
             ),
             (
-                "The half-swap intervention is a controlled commutative "
-                "invariance/equivariance test; its behavioral proxies are "
-                "not direct causal proof of shortcut use."
+                "The controlled intervention supplies behavioral failure "
+                "labels; these strengthen causal analysis but do not by "
+                "themselves prove the model's internal causal mechanism."
             )
             if intervention is not None
             else None,

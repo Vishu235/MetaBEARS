@@ -132,8 +132,12 @@ def probe_concept_consistency(
     stability between the original and perturbed ensemble means contributes
     to the score as a third, separately reported component.
 
-    The blend weights below (0.6/0.4, or 0.4/0.2/0.4 with perturbations) are
-    fixed heuristics; they have not been calibrated against validation data.
+    Base instability is the fixed 0.6/0.4 blend of ensemble Jensen--Shannon
+    disagreement and vote disagreement. Perturbation instability is combined
+    with that base using a probabilistic OR. Consequently, a perfectly stable
+    perturbation leaves the base score unchanged, while either source of
+    instability can increase the final score. These heuristics have not been
+    calibrated against validation data.
     """
 
     base = _as_probability_array(
@@ -148,10 +152,11 @@ def probe_concept_consistency(
     vote_per_concept = _vote_disagreement(base)
     ensemble_js = ensemble_js_per_concept.mean(axis=-1)
     vote_disagreement = vote_per_concept.mean(axis=-1)
+    base_instability = 0.6 * ensemble_js + 0.4 * vote_disagreement
 
     if perturbed_member_probabilities is None:
         perturbation_js = np.zeros(base.shape[1], dtype=np.float64)
-        instability = 0.6 * ensemble_js + 0.4 * vote_disagreement
+        instability = base_instability
     else:
         perturbed = _as_probability_array(
             perturbed_member_probabilities,
@@ -178,11 +183,7 @@ def probe_concept_consistency(
         perturbation_js = _pairwise_js(base_mean, perturbation_mean).mean(
             axis=(1, 2)
         )
-        instability = (
-            0.4 * ensemble_js
-            + 0.2 * vote_disagreement
-            + 0.4 * perturbation_js
-        )
+        instability = 1.0 - (1.0 - base_instability) * (1.0 - perturbation_js)
 
     return ConsistencyResult(
         score=np.clip(1.0 - instability, 0.0, 1.0),

@@ -3,6 +3,7 @@
 import json
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,7 @@ from XOR_MNIST.metacog import (
     run_metabears_experiment,
     shortcut_proxy_labels,
 )
+from XOR_MNIST.metacog.halfmnist_runner import _checkpoint_filename
 
 
 def peaked(class_index: int, class_count: int, peak: float = 0.98) -> np.ndarray:
@@ -110,6 +112,20 @@ class CalibrationTests(unittest.TestCase):
 
 
 class ExperimentRunnerTests(unittest.TestCase):
+    def test_patch_checkpoint_filename_cannot_overwrite_standard_member(self) -> None:
+        args = Namespace(
+            dataset="halfmnist",
+            ensemble_kind="bears",
+            model="mnistdpl",
+            joint=False,
+            real_kl=True,
+            shortcut_patch_training=True,
+        )
+
+        filename = _checkpoint_filename(args, seed=1)
+
+        self.assertTrue(filename.endswith("-shortcut-patch-True.pt"))
+
     def test_experiment_writes_all_split_artifacts_and_ood_metrics(self) -> None:
         models = [FakeHalfMNISTMember(0), FakeHalfMNISTMember(1)]
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -159,7 +175,9 @@ class ExperimentRunnerTests(unittest.TestCase):
         identity = PredictionIntervention(
             name="identity_test",
             description="Identity transform used to test paired orchestration.",
-            transform_images=lambda images: np.asarray(images).copy(),
+            transform_images=lambda images, labels, concepts: np.asarray(
+                images
+            ).copy(),
             align_concept_probabilities=lambda probabilities: np.asarray(
                 probabilities
             ).copy(),
@@ -189,6 +207,13 @@ class ExperimentRunnerTests(unittest.TestCase):
         self.assertEqual(
             result.summary["splits"]["id_test"]["mean_perturbation_js"],
             0.0,
+        )
+        semantic_detection = result.summary["intervention"]["id_test"][
+            "semantic_instability_detection"
+        ]
+        self.assertFalse(semantic_detection["evaluable"])
+        self.assertEqual(
+            semantic_detection["non_evaluable_reason"], "no positive examples"
         )
 
     def test_experiment_can_run_without_an_ood_split(self) -> None:

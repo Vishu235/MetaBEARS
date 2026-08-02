@@ -183,7 +183,9 @@ def collect_ensemble_predictions(
                 )
             images, labels, concepts = batch
             inference_images = (
-                image_transform(images) if image_transform is not None else images
+                image_transform(images, labels, concepts)
+                if image_transform is not None
+                else images
             )
 
             output_dicts = []
