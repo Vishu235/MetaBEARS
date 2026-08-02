@@ -191,6 +191,13 @@ added. The default aggregator then expects all four patch interventions and
 writes `fusion_v4_models.csv` and `fusion_v4_threshold_results.csv` alongside
 the unchanged v1-v3 outputs and paired comparisons.
 
+The completed Phase-II evidence is frozen by `results_freeze_v4.json`. The
+result archive remains outside Git, while its exact filename, byte size,
+SHA-256 digest, protocol identities, run matrix, source hashes, and integrity
+checks are versioned. Any later experimental change requires a new protocol
+and result freeze; report-only tables and figures must trace back to the frozen
+archive digest.
+
 For a deliberately summary-only aggregation that does not have the `.npz`
 prediction artifacts, add `--skip-detector-analysis`.
 

@@ -1,5 +1,6 @@
 """Tests for frozen MetaBEARS protocol automation and aggregation."""
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,6 +35,7 @@ PROTOCOL_PATH = REPO_ROOT / "experiment_protocol.json"
 ANALYSIS_PROTOCOL_PATH = REPO_ROOT / "analysis_protocol_v2.json"
 ANALYSIS_PROTOCOL_V3_PATH = REPO_ROOT / "analysis_protocol_v3.json"
 ANALYSIS_PROTOCOL_V4_PATH = REPO_ROOT / "analysis_protocol_v4.json"
+RESULTS_FREEZE_V4_PATH = REPO_ROOT / "results_freeze_v4.json"
 
 
 def valid_configuration() -> dict:
@@ -132,6 +134,23 @@ class FrozenProtocolTests(unittest.TestCase):
             analysis.data["held_out_intervention_validation_used_for_fitting"]
         )
         self.assertEqual(len(analysis.data["evaluation_interventions"]), 4)
+
+    def test_results_freeze_is_bound_to_v1_and_v4_protocols(self) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+        analysis = load_analysis_protocol(ANALYSIS_PROTOCOL_V4_PATH, protocol)
+        freeze = json.loads(RESULTS_FREEZE_V4_PATH.read_text(encoding="utf-8"))
+
+        self.assertEqual(freeze["status"], "frozen")
+        self.assertEqual(freeze["base_protocol"]["id"], protocol.protocol_id)
+        self.assertEqual(freeze["base_protocol"]["sha256"], protocol.sha256)
+        self.assertEqual(
+            freeze["analysis_protocol"]["id"], analysis.protocol_id
+        )
+        self.assertEqual(
+            freeze["analysis_protocol"]["sha256"], analysis.sha256
+        )
+        self.assertEqual(freeze["run_matrix"]["run_count"], 12)
+        self.assertEqual(len(freeze["artifact"]["sha256"]), 64)
 
     def test_provenance_hashes_artifacts_and_reuses_a_cache(self) -> None:
         protocol = load_protocol(PROTOCOL_PATH)

@@ -1,0 +1,69 @@
+{
+  "freeze_id": "metabears-phase2-results-v4",
+  "status": "frozen",
+  "frozen_at_utc": "2026-08-02T10:58:56.7033153Z",
+  "artifact": {
+    "filename": "aggregate_v6.zip",
+    "size_bytes": 8176029,
+    "sha256": "53e0534aed40c6085130604c7202463fb8f89f5eae7b696cf442b82a1bce106f",
+    "storage_policy": "external_not_tracked_in_git"
+  },
+  "base_protocol": {
+    "id": "metabears-halfmnist-v1",
+    "sha256": "2475895b327fb4d1f7dfe94beb4adbc92c2b1afd70097917f1047ed95ea529d6"
+  },
+  "analysis_protocol": {
+    "id": "metabears-leave-one-intervention-out-v4",
+    "sha256": "40ee1b30db109da62134d36c89b011716efa44837942e243664511e696db4198"
+  },
+  "aggregate_provenance": {
+    "generated_at_utc": "2026-08-02T10:46:45.571664+00:00",
+    "git_commit": "30c4ff97aa453abd7d8679c5edd55b368dcdcf4f",
+    "git_dirty": false,
+    "warning_count": 0,
+    "source_files": {
+      "aggregate_metabears_results.py": "af4885c732fe344f01c02d32f46fb2a63d2338dd9bd89a4b27b8f6434687c009",
+      "analysis_protocol_v2.json": "fa8e2cf58be5d5dd213b8db91ca21f7c538c12a452534dd710165dd73198e422",
+      "analysis_protocol_v3.json": "35301b1d26788c8e0a2dfdd2da60614cad7a01322166ddecf9fe26ec97f0e5f6",
+      "analysis_protocol_v4.json": "40ee1b30db109da62134d36c89b011716efa44837942e243664511e696db4198",
+      "XOR_MNIST/metacog/posthoc.py": "17c2a11495f82146e4c022af7c0baed9702a421c39676e579312a994941a8421"
+    }
+  },
+  "run_matrix": {
+    "run_count": 12,
+    "seeds": [
+      0,
+      10,
+      20
+    ],
+    "interventions": [
+      "patch_shuffled",
+      "patch_removed",
+      "patch_conflict",
+      "patch_neutral"
+    ],
+    "run_generation_commits": {
+      "cb4992abdfa30b29c2c374203699de3606f5c62b": [
+        "patch_shuffled",
+        "patch_removed"
+      ],
+      "30c4ff97aa453abd7d8679c5edd55b368dcdcf4f": [
+        "patch_conflict",
+        "patch_neutral"
+      ]
+    }
+  },
+  "integrity_checks": {
+    "single_dataset_fingerprint_across_all_runs": true,
+    "single_checkpoint_fingerprint_per_seed_across_interventions": true,
+    "all_expected_seed_intervention_runs_present": true,
+    "aggregate_generated_from_clean_worktree": true,
+    "aggregate_has_no_warnings": true
+  },
+  "freeze_policy": {
+    "primary_evidence_for_project_report": true,
+    "post_freeze_tuning_on_these_test_results": false,
+    "new_experiments_require_new_versioned_protocol": true,
+    "reporting_only_derivations_must_preserve_this_artifact_hash": true
+  }
+}
