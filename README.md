@@ -223,6 +223,14 @@ artifacts. The added outputs are `fusion_v5_models.csv` and
 and aligned semantic failure prevalence, with the observed review rate reported
 without post-hoc adjustment.
 
+If a fresh runtime reserializes the HalfMNIST source artifact, its file-level
+SHA-256 can differ from the frozen runtime. V5 does not blindly bypass that
+check. It accepts the control only when labels, concepts, and batch boundaries
+match exactly and the saved base concept probabilities, task probabilities,
+and representations match the frozen `patch_shuffled` run within the fixed v5
+tolerances on validation, ID-test, and OOD-test splits. The equivalence decision
+and maximum observed difference are written to `aggregate_results.json`.
+
 For a deliberately summary-only aggregation that does not have the `.npz`
 prediction artifacts, add `--skip-detector-analysis`.
 

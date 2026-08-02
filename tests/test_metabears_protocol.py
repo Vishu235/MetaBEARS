@@ -5,8 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from aggregate_metabears_results import (
     METRIC_FIELDS,
+    _validate_prediction_artifact_equivalence,
     analysis_protocol_chain,
     aggregate_fusion_threshold_results,
     aggregate_rows,
@@ -182,6 +185,10 @@ class FrozenProtocolTests(unittest.TestCase):
             analysis.data["negative_control_validation_used_for_fitting"]
         )
         self.assertEqual(analysis.data["cross_validation_folds"], 4)
+        self.assertEqual(
+            analysis.data["dataset_equivalence"]["comparison_intervention"],
+            "half_swap",
+        )
 
     def test_provenance_hashes_artifacts_and_reuses_a_cache(self) -> None:
         protocol = load_protocol(PROTOCOL_PATH)
@@ -274,6 +281,56 @@ class MatrixRunnerTests(unittest.TestCase):
 
 
 class AggregationTests(unittest.TestCase):
+    def test_prediction_equivalence_accepts_serialization_sha_mismatch(self) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+        analysis = load_analysis_protocol(ANALYSIS_PROTOCOL_V5_PATH, protocol)
+        policy = analysis.data["dataset_equivalence"]
+        arrays = {
+            "concept_member_probabilities": np.full(
+                (2, 3, 2, 2), 0.5, dtype=np.float32
+            ),
+            "label_member_probabilities": np.full(
+                (2, 3, 2), 0.5, dtype=np.float32
+            ),
+            "member_representations": np.arange(
+                12, dtype=np.float32
+            ).reshape(2, 3, 2),
+            "labels": np.array([0, 1, 0], dtype=np.int64),
+            "concepts": np.array([[0, 0], [1, 1], [0, 1]], dtype=np.int64),
+            "batch_sizes": np.array([2, 1], dtype=np.int64),
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            reference = root / "reference"
+            candidate = root / "candidate"
+            reference.mkdir()
+            candidate.mkdir()
+            for split in policy["splits"]:
+                np.savez_compressed(
+                    reference / f"{split}_predictions.npz", **arrays
+                )
+                np.savez_compressed(
+                    candidate / f"{split}_predictions.npz", **arrays
+                )
+
+            result = _validate_prediction_artifact_equivalence(
+                reference, candidate, policy
+            )
+            changed = dict(arrays)
+            changed["member_representations"] = (
+                arrays["member_representations"] + 0.1
+            )
+            np.savez_compressed(
+                candidate / "id_test_predictions.npz", **changed
+            )
+            with self.assertRaisesRegex(ValueError, "prediction mismatch"):
+                _validate_prediction_artifact_equivalence(
+                    reference, candidate, policy
+                )
+
+        self.assertEqual(result["compared_values"], 144)
+        self.assertEqual(result["maximum_absolute_difference"], 0.0)
+
     def test_run_extraction_reports_prevalence_and_normalized_effect(self) -> None:
         detection = {
             "positive_count": 21,

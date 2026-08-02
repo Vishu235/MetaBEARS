@@ -14,6 +14,8 @@ import subprocess
 import sys
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+import numpy as np
+
 from XOR_MNIST.metacog.posthoc import (
     DETECTOR_DESCRIPTIONS,
     TARGET_DEFINITIONS,
@@ -278,6 +280,39 @@ def load_analysis_protocol(
                 raise ValueError(
                     "Negative control must be excluded from training interventions."
                 )
+            equivalence = data.get("dataset_equivalence")
+            required_equivalence_fields = {
+                "reference_intervention",
+                "comparison_intervention",
+                "splits",
+                "exact_arrays",
+                "tolerant_arrays",
+                "relative_tolerance",
+                "absolute_tolerance",
+            }
+            if not isinstance(equivalence, Mapping) or not required_equivalence_fields.issubset(
+                equivalence
+            ):
+                raise ValueError(
+                    "External negative-control analysis requires a complete "
+                    "dataset-equivalence policy."
+                )
+            if equivalence["comparison_intervention"] != negative_control:
+                raise ValueError(
+                    "Dataset-equivalence comparison must be the negative control."
+                )
+            if equivalence["reference_intervention"] not in training_interventions:
+                raise ValueError(
+                    "Dataset-equivalence reference must be a training intervention."
+                )
+            if not equivalence["splits"] or not equivalence["exact_arrays"]:
+                raise ValueError(
+                    "Dataset-equivalence splits and exact arrays must be non-empty."
+                )
+            if not equivalence["tolerant_arrays"]:
+                raise ValueError(
+                    "Dataset-equivalence tolerant arrays must be non-empty."
+                )
             allowed = {
                 evaluation["primary_intervention"],
                 *evaluation.get("secondary_interventions", []),
@@ -483,6 +518,95 @@ def _validate_summary(
             raise ValueError("Primary shuffled run is missing assignment metrics.")
 
 
+def _validate_prediction_artifact_equivalence(
+    reference_directory: Path,
+    candidate_directory: Path,
+    policy: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Verify that two runs evaluated the same ordered base examples."""
+
+    splits = tuple(str(name) for name in policy["splits"])
+    exact_arrays = tuple(str(name) for name in policy["exact_arrays"])
+    tolerant_arrays = tuple(str(name) for name in policy["tolerant_arrays"])
+    relative_tolerance = float(policy["relative_tolerance"])
+    absolute_tolerance = float(policy["absolute_tolerance"])
+    if relative_tolerance < 0.0 or absolute_tolerance < 0.0:
+        raise ValueError("Dataset-equivalence tolerances must be non-negative.")
+
+    maximum_absolute_difference = 0.0
+    compared_values = 0
+    for split in splits:
+        filename = f"{split}_predictions.npz"
+        reference_path = reference_directory / filename
+        candidate_path = candidate_directory / filename
+        if not reference_path.is_file() or not candidate_path.is_file():
+            raise ValueError(
+                "Dataset-equivalence validation is missing a base prediction "
+                f"artifact for {split}."
+            )
+        with np.load(reference_path, allow_pickle=False) as reference, np.load(
+            candidate_path, allow_pickle=False
+        ) as candidate:
+            for array_name in (*exact_arrays, *tolerant_arrays):
+                if array_name not in reference or array_name not in candidate:
+                    raise ValueError(
+                        "Dataset-equivalence artifact is missing array "
+                        f"{array_name!r} on split {split}."
+                    )
+                if reference[array_name].shape != candidate[array_name].shape:
+                    raise ValueError(
+                        "Dataset-equivalence shape mismatch for "
+                        f"{split}:{array_name}."
+                    )
+            for array_name in exact_arrays:
+                if not np.array_equal(reference[array_name], candidate[array_name]):
+                    raise ValueError(
+                        "Dataset-equivalence exact target mismatch for "
+                        f"{split}:{array_name}."
+                    )
+            for array_name in tolerant_arrays:
+                reference_values = np.asarray(
+                    reference[array_name], dtype=np.float64
+                )
+                candidate_values = np.asarray(
+                    candidate[array_name], dtype=np.float64
+                )
+                if not np.allclose(
+                    reference_values,
+                    candidate_values,
+                    rtol=relative_tolerance,
+                    atol=absolute_tolerance,
+                    equal_nan=False,
+                ):
+                    difference = float(
+                        np.max(np.abs(reference_values - candidate_values))
+                    )
+                    raise ValueError(
+                        "Dataset-equivalence prediction mismatch for "
+                        f"{split}:{array_name}; maximum absolute difference "
+                        f"is {difference:.8g}."
+                    )
+                if reference_values.size:
+                    maximum_absolute_difference = max(
+                        maximum_absolute_difference,
+                        float(
+                            np.max(
+                                np.abs(reference_values - candidate_values)
+                            )
+                        ),
+                    )
+                    compared_values += int(reference_values.size)
+    return {
+        "splits": list(splits),
+        "exact_arrays": list(exact_arrays),
+        "tolerant_arrays": list(tolerant_arrays),
+        "relative_tolerance": relative_tolerance,
+        "absolute_tolerance": absolute_tolerance,
+        "maximum_absolute_difference": maximum_absolute_difference,
+        "compared_values": compared_values,
+    }
+
+
 def discover_rows(
     protocol: FrozenProtocol,
     results_root: Path,
@@ -490,7 +614,8 @@ def discover_rows(
     seeds: Sequence[int],
     interventions: Sequence[str],
     allow_partial: bool,
-) -> List[Dict[str, Any]]:
+    dataset_equivalence_policy: Optional[Mapping[str, Any]] = None,
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
     rows = []
     missing = []
     for seed in seeds:
@@ -519,8 +644,76 @@ def discover_rows(
     if not rows:
         raise ValueError("No valid frozen run summaries were found.")
     dataset_fingerprints = {row["dataset_fingerprint"] for row in rows}
+    dataset_equivalence: Dict[str, Any] = {
+        "raw_dataset_fingerprints_match": len(dataset_fingerprints) == 1,
+        "raw_dataset_fingerprints": sorted(dataset_fingerprints),
+        "policy": "raw_artifact_sha256",
+        "per_seed_comparisons": [],
+    }
     if len(dataset_fingerprints) != 1:
-        raise ValueError("Runs do not share the same dataset SHA-256 fingerprints.")
+        if dataset_equivalence_policy is None:
+            raise ValueError(
+                "Runs do not share the same dataset SHA-256 fingerprints."
+            )
+        reference_intervention = str(
+            dataset_equivalence_policy["reference_intervention"]
+        )
+        comparison_intervention = str(
+            dataset_equivalence_policy["comparison_intervention"]
+        )
+        reference_rows = [
+            row for row in rows if row["intervention"] != comparison_intervention
+        ]
+        comparison_rows = [
+            row for row in rows if row["intervention"] == comparison_intervention
+        ]
+        if len({row["dataset_fingerprint"] for row in reference_rows}) != 1:
+            raise ValueError(
+                "Frozen reference interventions do not share one dataset "
+                "SHA-256 fingerprint."
+            )
+        if len({row["dataset_fingerprint"] for row in comparison_rows}) != 1:
+            raise ValueError(
+                "Negative-control runs do not share one dataset SHA-256 "
+                "fingerprint."
+            )
+        indexed = {
+            (int(row["seed"]), str(row["intervention"])): row for row in rows
+        }
+        comparisons = []
+        for seed in seeds:
+            reference = indexed.get((seed, reference_intervention))
+            comparison = indexed.get((seed, comparison_intervention))
+            if reference is None or comparison is None:
+                raise ValueError(
+                    f"Seed {seed} lacks a run required for dataset equivalence."
+                )
+            equivalence = _validate_prediction_artifact_equivalence(
+                Path(str(reference["summary_path"])).parent,
+                Path(str(comparison["summary_path"])).parent,
+                dataset_equivalence_policy,
+            )
+            comparisons.append(
+                {
+                    "seed": seed,
+                    "reference_intervention": reference_intervention,
+                    "comparison_intervention": comparison_intervention,
+                    "reference_dataset_fingerprint": reference[
+                        "dataset_fingerprint"
+                    ],
+                    "comparison_dataset_fingerprint": comparison[
+                        "dataset_fingerprint"
+                    ],
+                    **equivalence,
+                }
+            )
+        dataset_equivalence.update(
+            {
+                "policy": "saved_base_prediction_artifact_equivalence",
+                "fallback_reason": "raw dataset artifact SHA-256 mismatch",
+                "per_seed_comparisons": comparisons,
+            }
+        )
     for seed in seeds:
         seed_fingerprints = {
             row["checkpoint_fingerprint"] for row in rows if row["seed"] == seed
@@ -538,7 +731,7 @@ def discover_rows(
             raise ValueError(
                 f"Seeds {previous_seed} and {seed} reuse identical checkpoints."
             )
-    return rows
+    return rows, dataset_equivalence
 
 
 def aggregate_rows(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -1821,12 +2014,15 @@ def main() -> int:
             *evaluation.get("secondary_interventions", []),
         ],
     )
-    rows = discover_rows(
+    rows, dataset_equivalence = discover_rows(
         protocol,
         results_root,
         seeds=seeds,
         interventions=interventions,
         allow_partial=args.allow_partial,
+        dataset_equivalence_policy=analysis_protocol.data.get(
+            "dataset_equivalence"
+        ),
     )
     aggregates = aggregate_rows(rows)
     model_rows, model_aggregates = aggregate_unique_models(rows)
@@ -2046,6 +2242,7 @@ def main() -> int:
         "analysis_protocol_id": analysis_protocol.protocol_id,
         "analysis_protocol_sha256": analysis_protocol.sha256,
         "analysis_protocol": analysis_protocol.data,
+        "dataset_equivalence": dataset_equivalence,
         "reporting_provenance": provenance,
         "runs": rows,
         "aggregates": aggregates,

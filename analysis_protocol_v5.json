@@ -26,6 +26,28 @@
   ],
   "negative_control_intervention": "half_swap",
   "outer_evaluation": "external_negative_control",
+  "dataset_equivalence": {
+    "fallback_trigger": "raw dataset artifact SHA-256 mismatch across runtimes",
+    "reference_intervention": "patch_shuffled",
+    "comparison_intervention": "half_swap",
+    "splits": [
+      "validation",
+      "id_test",
+      "ood_test"
+    ],
+    "exact_arrays": [
+      "labels",
+      "concepts",
+      "batch_sizes"
+    ],
+    "tolerant_arrays": [
+      "concept_member_probabilities",
+      "label_member_probabilities",
+      "member_representations"
+    ],
+    "relative_tolerance": 0.0001,
+    "absolute_tolerance": 1e-05
+  },
   "cross_validation": "leave_one_training_intervention_out",
   "signals": [
     "perturbation_js",
