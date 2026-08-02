@@ -46,6 +46,11 @@ DETECTOR_DESCRIPTIONS = {
         "Protocol-v2 non-negative fusion fitted by cross-validation on the "
         "primary validation intervention only."
     ),
+    "intervention_calibrated_fusion_v3": (
+        "Protocol-v3 fusion with v2 weights and threshold, using only the "
+        "current intervention's unlabeled validation scores to recalibrate "
+        "empirical percentile references."
+    ),
 }
 
 TARGET_DEFINITIONS = {
@@ -90,14 +95,22 @@ class ValidationFusionModel:
     validation_recall: float
     validation_f1: float
 
-    def score(self, raw_scores: Mapping[str, np.ndarray]) -> np.ndarray:
+    def score(
+        self,
+        raw_scores: Mapping[str, np.ndarray],
+        *,
+        references: Mapping[str, np.ndarray] | None = None,
+    ) -> np.ndarray:
+        active_references = self.references if references is None else references
         transformed = []
         for name in self.signal_names:
             if name not in raw_scores:
                 raise ValueError(f"Fusion input is missing signal '{name}'.")
+            if name not in active_references:
+                raise ValueError(f"Fusion references are missing signal '{name}'.")
             transformed.append(
                 _empirical_midrank_percentile(
-                    self.references[name], np.asarray(raw_scores[name])
+                    active_references[name], np.asarray(raw_scores[name])
                 )
             )
         matrix = np.column_stack(transformed)
@@ -134,16 +147,18 @@ class FusionRunAnalysis:
     threshold_metrics: Sequence[Mapping[str, Any]]
 
 
-def _load_prediction_artifact(path: PathLike) -> Dict[str, np.ndarray]:
+def _load_prediction_artifact(
+    path: PathLike, *, include_targets: bool = True
+) -> Dict[str, np.ndarray]:
     source = Path(path).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Prediction artifact is missing: {source}")
-    required = (
+    required = [
         "concept_member_probabilities",
         "label_member_probabilities",
-        "labels",
-        "concepts",
-    )
+    ]
+    if include_targets:
+        required.extend(("labels", "concepts"))
     with np.load(source, allow_pickle=False) as archive:
         missing = [name for name in required if name not in archive]
         if missing:
@@ -175,11 +190,17 @@ def _normalized_entropy(probabilities: np.ndarray) -> np.ndarray:
     return -np.sum(values * np.log(safe), axis=-1) / np.log(values.shape[-1])
 
 
-def detector_scores_and_targets(
+def _detector_components(
     base: Mapping[str, np.ndarray],
     perturbed: Mapping[str, np.ndarray],
-) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-    """Reconstruct detector scores and controlled held-out failure labels."""
+) -> Tuple[
+    Dict[str, np.ndarray],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
+    """Compute score channels and predictions without reading target arrays."""
 
     base_concept_probabilities = np.asarray(
         base["concept_member_probabilities"], dtype=np.float64
@@ -197,15 +218,6 @@ def detector_scores_and_targets(
         raise ValueError("Base and intervention concept probabilities must match.")
     if base_label_probabilities.shape != perturbed_label_probabilities.shape:
         raise ValueError("Base and intervention task probabilities must match.")
-
-    labels = _task_targets(base["labels"])
-    perturbed_labels = _task_targets(perturbed["labels"])
-    concepts = _concept_targets(base["concepts"])
-    perturbed_concepts = _concept_targets(perturbed["concepts"])
-    if not np.array_equal(labels, perturbed_labels) or not np.array_equal(
-        concepts, perturbed_concepts
-    ):
-        raise ValueError("Base and intervention artifacts must share targets.")
 
     task_mean = base_label_probabilities.mean(axis=0)
     perturbed_task_mean = perturbed_label_probabilities.mean(axis=0)
@@ -227,10 +239,76 @@ def detector_scores_and_targets(
 
     base_concept_predictions = np.argmax(
         base_concept_probabilities.mean(axis=0), axis=-1
-    ).reshape(concepts.shape)
+    ).reshape(base_concept_probabilities.shape[1], -1)
     perturbed_concept_predictions = np.argmax(
         perturbed_concept_probabilities.mean(axis=0), axis=-1
-    ).reshape(concepts.shape)
+    ).reshape(perturbed_concept_probabilities.shape[1], -1)
+    scores = {
+        "task_uncertainty": 1.0 - task_confidence,
+        "task_entropy": _normalized_entropy(task_mean),
+        "task_distribution_js": _paired_probability_js(
+            task_mean, perturbed_task_mean
+        ),
+        "label_disagreement": label_disagreement,
+        "ensemble_concept_disagreement": consistency.ensemble_js,
+        "concept_vote_disagreement": consistency.vote_disagreement,
+        "concept_instability_without_perturbation": base_concept_instability,
+        "perturbation_js": consistency.perturbation_js,
+        "concept_instability_with_perturbation": combined_concept_instability,
+        "full_metabears": np.clip(
+            combined_concept_instability
+            * (1.0 - label_disagreement)
+            * task_confidence,
+            0.0,
+            1.0,
+        ),
+    }
+    return (
+        scores,
+        base_task,
+        perturbed_task,
+        base_concept_predictions,
+        perturbed_concept_predictions,
+    )
+
+
+def detector_scores(
+    base: Mapping[str, np.ndarray],
+    perturbed: Mapping[str, np.ndarray],
+) -> Dict[str, np.ndarray]:
+    """Compute detector channels without inspecting labels or concept targets."""
+
+    scores, _, _, _, _ = _detector_components(base, perturbed)
+    return scores
+
+
+def detector_scores_and_targets(
+    base: Mapping[str, np.ndarray],
+    perturbed: Mapping[str, np.ndarray],
+) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+    """Reconstruct detector scores and controlled held-out failure labels."""
+
+    (
+        scores,
+        base_task,
+        perturbed_task,
+        base_concept_predictions,
+        perturbed_concept_predictions,
+    ) = _detector_components(base, perturbed)
+    labels = _task_targets(base["labels"])
+    perturbed_labels = _task_targets(perturbed["labels"])
+    concepts = _concept_targets(base["concepts"])
+    perturbed_concepts = _concept_targets(perturbed["concepts"])
+    if not np.array_equal(labels, perturbed_labels) or not np.array_equal(
+        concepts, perturbed_concepts
+    ):
+        raise ValueError("Base and intervention artifacts must share targets.")
+    if (
+        labels.size != base_task.size
+        or concepts.shape != base_concept_predictions.shape
+    ):
+        raise ValueError("Prediction and target sample shapes must match.")
+
     valid_concepts = concepts >= 0
     concept_predictions_match = np.all(
         (base_concept_predictions == perturbed_concept_predictions)
@@ -253,27 +331,28 @@ def detector_scores_and_targets(
     targets["controlled_failure_union"] = (
         targets["task_invariance_failure"] | targets["semantic_instability"]
     )
-    scores = {
-        "task_uncertainty": 1.0 - task_confidence,
-        "task_entropy": _normalized_entropy(task_mean),
-        "task_distribution_js": _paired_probability_js(
-            task_mean, perturbed_task_mean
-        ),
-        "label_disagreement": label_disagreement,
-        "ensemble_concept_disagreement": consistency.ensemble_js,
-        "concept_vote_disagreement": consistency.vote_disagreement,
-        "concept_instability_without_perturbation": base_concept_instability,
-        "perturbation_js": consistency.perturbation_js,
-        "concept_instability_with_perturbation": combined_concept_instability,
-        "full_metabears": np.clip(
-            combined_concept_instability
-            * (1.0 - label_disagreement)
-            * task_confidence,
-            0.0,
-            1.0,
-        ),
-    }
     return scores, targets
+
+
+def calibrate_fusion_references(
+    base: Mapping[str, np.ndarray],
+    perturbed: Mapping[str, np.ndarray],
+    *,
+    signal_names: Sequence[str],
+) -> Dict[str, np.ndarray]:
+    """Fit percentile references from predictions, without reading targets."""
+
+    names = tuple(str(name) for name in signal_names)
+    if not names or len(set(names)) != len(names):
+        raise ValueError("signal_names must be a non-empty unique sequence.")
+    scores = detector_scores(base, perturbed)
+    missing = [name for name in names if name not in scores]
+    if missing:
+        raise ValueError(f"Unknown fusion signals: {', '.join(missing)}")
+    return {
+        name: np.sort(np.asarray(scores[name], dtype=np.float64))
+        for name in names
+    }
 
 
 def _empirical_midrank_percentile(
@@ -631,12 +710,14 @@ def evaluate_fusion_arrays(
     model: ValidationFusionModel,
     base: Mapping[str, np.ndarray],
     perturbed: Mapping[str, np.ndarray],
+    *,
+    detector_name: str = "validation_fitted_fusion_v2",
+    references: Mapping[str, np.ndarray] | None = None,
 ) -> FusionRunAnalysis:
     """Apply one validation-fitted model to an untouched held-out split."""
 
     scores, targets = detector_scores_and_targets(base, perturbed)
-    fused = model.score(scores)
-    detector_name = "validation_fitted_fusion_v2"
+    fused = model.score(scores, references=references)
     analysis = _evaluate_score_mapping({detector_name: fused}, targets)
     flags = fused >= model.threshold
     threshold_metrics = []
@@ -669,21 +750,51 @@ def fit_validation_fusion_from_result_directory(
     return fit_validation_fusion(base, perturbed, **fit_arguments)
 
 
+def calibrate_fusion_references_from_result_directory(
+    result_directory: PathLike,
+    *,
+    signal_names: Sequence[str],
+) -> Dict[str, np.ndarray]:
+    """Fit unlabeled validation references for one seed and intervention."""
+
+    directory = Path(result_directory).expanduser().resolve()
+    base = _load_prediction_artifact(
+        directory / "validation_predictions.npz", include_targets=False
+    )
+    perturbed = _load_prediction_artifact(
+        directory / "validation_intervention_predictions.npz",
+        include_targets=False,
+    )
+    return calibrate_fusion_references(
+        base,
+        perturbed,
+        signal_names=signal_names,
+    )
+
+
 def evaluate_fusion_result_directory(
     model: ValidationFusionModel,
     result_directory: PathLike,
     *,
     seed: int,
     intervention: str,
+    detector_name: str = "validation_fitted_fusion_v2",
+    references: Mapping[str, np.ndarray] | None = None,
 ) -> FusionRunAnalysis:
-    """Evaluate Protocol-v2 fusion on one held-out control directory."""
+    """Evaluate a frozen fusion on one held-out control directory."""
 
     directory = Path(result_directory).expanduser().resolve()
     base = _load_prediction_artifact(directory / "id_test_predictions.npz")
     perturbed = _load_prediction_artifact(
         directory / "id_test_intervention_predictions.npz"
     )
-    result = evaluate_fusion_arrays(model, base, perturbed)
+    result = evaluate_fusion_arrays(
+        model,
+        base,
+        perturbed,
+        detector_name=detector_name,
+        references=references,
+    )
 
     def annotate(rows: Sequence[Mapping[str, Any]]) -> List[Mapping[str, Any]]:
         return [

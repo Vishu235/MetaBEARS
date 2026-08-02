@@ -6,8 +6,16 @@ from pathlib import Path
 
 import numpy as np
 
-from aggregate_metabears_results import evaluate_detector_matrix
+from aggregate_metabears_results import (
+    evaluate_detector_matrix,
+    evaluate_intervention_calibrated_fusion_matrix,
+    load_analysis_protocol,
+)
+from XOR_MNIST.metacog.protocol import load_protocol
 from XOR_MNIST.metacog.posthoc import (
+    calibrate_fusion_references,
+    calibrate_fusion_references_from_result_directory,
+    detector_scores,
     detector_scores_and_targets,
     evaluate_detector_arrays,
     evaluate_fusion_arrays,
@@ -83,6 +91,33 @@ class DetectorTargetTests(unittest.TestCase):
             targets["controlled_failure_union"],
             np.array([True, True, False, False]),
         )
+
+    def test_unlabeled_score_calibration_does_not_require_targets(self) -> None:
+        base, perturbed = prediction_pair()
+        unlabeled_base = {
+            name: value
+            for name, value in base.items()
+            if name not in {"labels", "concepts"}
+        }
+        unlabeled_perturbed = {
+            name: value
+            for name, value in perturbed.items()
+            if name not in {"labels", "concepts"}
+        }
+
+        scores = detector_scores(unlabeled_base, unlabeled_perturbed)
+        references = calibrate_fusion_references(
+            unlabeled_base,
+            unlabeled_perturbed,
+            signal_names=("perturbation_js", "task_distribution_js"),
+        )
+
+        self.assertIn("task_distribution_js", scores)
+        self.assertEqual(
+            set(references),
+            {"perturbation_js", "task_distribution_js"},
+        )
+        self.assertEqual(references["perturbation_js"].shape, (4,))
 
     def test_curves_have_expected_endpoints(self) -> None:
         scores = np.array([0.9, 0.8, 0.2, 0.1])
@@ -221,6 +256,87 @@ class DetectorTargetTests(unittest.TestCase):
 
         self.assertEqual(len(result.analysis.metrics), 3)
         self.assertTrue(all(row["seed"] == 3 for row in result.analysis.metrics))
+
+    def test_conditioned_references_load_without_validation_targets(self) -> None:
+        base, perturbed = prediction_pair()
+        unlabeled_base = {
+            name: value
+            for name, value in base.items()
+            if name not in {"labels", "concepts"}
+        }
+        unlabeled_perturbed = {
+            name: value
+            for name, value in perturbed.items()
+            if name not in {"labels", "concepts"}
+        }
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory)
+            np.savez_compressed(
+                output / "validation_predictions.npz", **unlabeled_base
+            )
+            np.savez_compressed(
+                output / "validation_intervention_predictions.npz",
+                **unlabeled_perturbed,
+            )
+
+            references = calibrate_fusion_references_from_result_directory(
+                output,
+                signal_names=("perturbation_js", "task_distribution_js"),
+            )
+
+        self.assertEqual(references["task_distribution_js"].shape, (4,))
+
+    def test_v3_matrix_calibrates_each_intervention_without_labels(self) -> None:
+        base, perturbed = prediction_pair()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            rows = []
+            for intervention in ("patch_shuffled", "patch_removed"):
+                output = root / intervention
+                output.mkdir()
+                for split in ("validation", "id_test"):
+                    np.savez_compressed(
+                        output / f"{split}_predictions.npz", **base
+                    )
+                    np.savez_compressed(
+                        output / f"{split}_intervention_predictions.npz",
+                        **perturbed,
+                    )
+                rows.append(
+                    {
+                        "seed": 0,
+                        "intervention": intervention,
+                        "summary_path": str(output / "run_summary.json"),
+                    }
+                )
+            repo_root = Path(__file__).resolve().parents[1]
+            base_protocol = load_protocol(repo_root / "experiment_protocol.json")
+            analysis_protocol = load_analysis_protocol(
+                repo_root / "analysis_protocol_v3.json", base_protocol
+            )
+
+            (
+                metrics,
+                _,
+                _,
+                models,
+                references,
+                threshold_results,
+            ) = evaluate_intervention_calibrated_fusion_matrix(
+                rows, analysis_protocol
+            )
+
+        self.assertEqual(len(metrics), 6)
+        self.assertEqual(len(models), 1)
+        self.assertEqual(len(references), 2)
+        self.assertEqual(len(threshold_results), 6)
+        self.assertTrue(all(not row["labels_used"] for row in references))
+        self.assertTrue(
+            all(
+                row["detector"] == "intervention_calibrated_fusion_v3"
+                for row in metrics
+            )
+        )
 
 
 if __name__ == "__main__":

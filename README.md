@@ -151,6 +151,24 @@ held-out threshold metrics, and paired baseline comparisons are written to
 `detector_paired_results.csv`, and
 `detector_paired_aggregate_results.csv`.
 
+The next analysis layer is frozen separately in `analysis_protocol_v3.json`.
+It preserves the v2 weights and 95%-recall threshold learned only from the
+labelled `patch_shuffled` validation split. For each known intervention, it
+then rebuilds the empirical percentile references from that intervention's
+validation predictions without loading task or concept targets. This tests
+whether unlabeled score-scale calibration improves threshold transfer while
+leaving every ID-test example and label untouched. It is a known-probe
+calibration protocol, not a claim of generalization to an intervention for
+which no validation predictions are available.
+
+The default aggregator now reports v1, v2, and v3 together. It writes
+`fusion_v3_models.csv`, `fusion_v3_reference_calibrations.csv`,
+`fusion_v3_threshold_results.csv`, and
+`fusion_threshold_aggregate_results.csv`. Paired detector tables include
+v2-minus-v1, v3-minus-v1, and v3-minus-v2 comparisons automatically. Existing
+v2 outputs and the frozen training protocol remain unchanged; rerunning model
+training is not required.
+
 For a deliberately summary-only aggregation that does not have the `.npz`
 prediction artifacts, add `--skip-detector-analysis`.
 

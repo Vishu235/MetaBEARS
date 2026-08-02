@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aggregate_metabears_results import (
     METRIC_FIELDS,
+    aggregate_fusion_threshold_results,
     aggregate_rows,
     aggregate_detector_results,
     aggregate_unique_models,
@@ -26,6 +27,7 @@ from XOR_MNIST.metacog.protocol import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_PATH = REPO_ROOT / "experiment_protocol.json"
 ANALYSIS_PROTOCOL_PATH = REPO_ROOT / "analysis_protocol_v2.json"
+ANALYSIS_PROTOCOL_V3_PATH = REPO_ROOT / "analysis_protocol_v3.json"
 
 
 def valid_configuration() -> dict:
@@ -72,6 +74,26 @@ class FrozenProtocolTests(unittest.TestCase):
         )
         self.assertEqual(analysis.data["fit_split"], "validation")
         self.assertFalse(analysis.data["test_labels_used_for_fitting"])
+
+    def test_v3_manifest_preserves_v2_fit_and_prohibits_label_calibration(
+        self,
+    ) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+
+        analysis = load_analysis_protocol(ANALYSIS_PROTOCOL_V3_PATH, protocol)
+
+        self.assertEqual(
+            analysis.protocol_id,
+            "metabears-intervention-calibrated-fusion-v3",
+        )
+        self.assertEqual(
+            analysis.data["parent_analysis_protocol_id"],
+            "metabears-validation-fusion-v2",
+        )
+        self.assertFalse(analysis.data["normalization_labels_used"])
+        self.assertFalse(
+            analysis.data["secondary_intervention_labels_used_for_fitting"]
+        )
 
     def test_manifest_rejects_post_hoc_hyperparameter_changes(self) -> None:
         protocol = load_protocol(PROTOCOL_PATH)
@@ -310,7 +332,7 @@ class AggregationTests(unittest.TestCase):
     def test_reporting_provenance_hashes_analysis_sources(self) -> None:
         provenance = reporting_provenance(REPO_ROOT)
 
-        self.assertEqual(len(provenance["source_files"]), 3)
+        self.assertEqual(len(provenance["source_files"]), 4)
         self.assertTrue(
             all(len(record["sha256"]) == 64 for record in provenance["source_files"])
         )
@@ -357,6 +379,28 @@ class AggregationTests(unittest.TestCase):
         )
         self.assertAlmostEqual(average_precision["mean"], -0.2)
         self.assertTrue(average_precision["higher_is_better"])
+
+    def test_fusion_thresholds_are_aggregated_across_seeds(self) -> None:
+        rows = [
+            {
+                "seed": seed,
+                "intervention": "patch_removed",
+                "target": "controlled_failure_union",
+                "detector": "intervention_calibrated_fusion_v3",
+                "review_rate": review_rate,
+                "precision": 0.8,
+                "recall": 0.95,
+                "f1": 0.87,
+            }
+            for seed, review_rate in ((0, 0.2), (10, 0.3), (20, 0.4))
+        ]
+
+        aggregates = aggregate_fusion_threshold_results(rows)
+
+        review = next(row for row in aggregates if row["metric"] == "review_rate")
+        self.assertEqual(review["n"], 3)
+        self.assertAlmostEqual(review["mean"], 0.3)
+        self.assertEqual(review["intervention"], "patch_removed")
 
 
 if __name__ == "__main__":

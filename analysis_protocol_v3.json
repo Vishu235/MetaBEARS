@@ -1,0 +1,39 @@
+{
+  "protocol_id": "metabears-intervention-calibrated-fusion-v3",
+  "base_protocol_id": "metabears-halfmnist-v1",
+  "base_protocol_sha256": "2475895b327fb4d1f7dfe94beb4adbc92c2b1afd70097917f1047ed95ea529d6",
+  "parent_analysis_protocol_file": "analysis_protocol_v2.json",
+  "parent_analysis_protocol_id": "metabears-validation-fusion-v2",
+  "parent_analysis_protocol_sha256": "fa8e2cf58be5d5dd213b8db91ca21f7c538c12a452534dd710165dd73198e422",
+  "description": "Protocol-v2 weights and threshold with per-intervention unlabeled validation percentile calibration using frozen Protocol-v1 prediction artifacts.",
+  "model_training": "none",
+  "fit_split": "validation",
+  "fit_intervention": "patch_shuffled",
+  "fit_target": "controlled_failure_union",
+  "evaluation_split": "id_test",
+  "signals": [
+    "perturbation_js",
+    "task_distribution_js",
+    "concept_instability_without_perturbation",
+    "task_uncertainty",
+    "label_disagreement"
+  ],
+  "normalization": "intervention-conditioned validation empirical midrank percentile",
+  "normalization_scope": "per_seed_and_intervention",
+  "normalization_split": "validation",
+  "normalization_labels_used": false,
+  "weight_grid_step": 0.1,
+  "cross_validation_folds": 5,
+  "selection_metric": "out_of_fold_average_precision",
+  "selection_tiebreakers": [
+    "out_of_fold_auroc",
+    "fewest_nonzero_weights",
+    "lexicographic_weights"
+  ],
+  "threshold_target_recall": 0.95,
+  "threshold_selection_split": "patch_shuffled validation",
+  "threshold_transfer_policy": "fixed percentile threshold after unlabeled intervention-conditioned normalization",
+  "test_labels_used_for_fitting": false,
+  "secondary_intervention_labels_used_for_fitting": false,
+  "claim_scope": "known intervention probes with an unlabeled validation calibration split; not unseen-intervention generalization"
+}
