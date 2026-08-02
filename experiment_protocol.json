@@ -1,0 +1,71 @@
+{
+  "protocol_id": "metabears-halfmnist-v1",
+  "frozen_core_commit": "b50a63fa584936686623027befae8c7c76e257be",
+  "dataset": {
+    "name": "halfmnist",
+    "task": "addition",
+    "model": "mnistdpl",
+    "artifact_paths": [
+      "XOR_MNIST/datasets/utils/2mnist_10digits/2mnist_10digits.pt",
+      "XOR_MNIST/data/rn.npy"
+    ]
+  },
+  "ensemble": {
+    "kind": "bears",
+    "members": 5,
+    "base_seeds": [
+      0,
+      10,
+      20
+    ],
+    "member_seed_offset_start": 1
+  },
+  "training": {
+    "epochs": 30,
+    "batch_size": 64,
+    "learning_rate": 0.0005,
+    "exponential_decay": 0.95,
+    "lambda_h": 0.8,
+    "real_kl": true,
+    "knowledge_aware_kl": false
+  },
+  "patch": {
+    "training_mode": "correlated",
+    "size": 3,
+    "encoding": "canonical_pair_one_hot",
+    "training_enabled": true
+  },
+  "evaluation": {
+    "primary_intervention": "patch_shuffled",
+    "secondary_interventions": [
+      "patch_removed"
+    ],
+    "supplementary_interventions": [
+      "patch_conflict",
+      "patch_neutral"
+    ],
+    "negative_control": "half_swap",
+    "max_batches": null
+  },
+  "calibration": {
+    "split": "validation",
+    "shortcut_policy": "max_f1_with_quantile_fallback",
+    "shortcut_fallback_quantile": 0.95,
+    "familiarity_validation_quantile": 0.05,
+    "ece_bins": 15
+  },
+  "primary_metrics": [
+    "id_accuracy_drop",
+    "task_failure_precision",
+    "task_failure_recall",
+    "task_failure_f1",
+    "semantic_instability_auroc",
+    "semantic_instability_average_precision",
+    "semantic_instability_f1",
+    "review_rate",
+    "coverage",
+    "ood_auroc",
+    "ood_average_precision",
+    "ood_f1"
+  ]
+}

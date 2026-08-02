@@ -78,6 +78,7 @@ class EnsemblePredictions:
     member_representations: Optional[np.ndarray] = None
     labels: Optional[np.ndarray] = None
     concepts: Optional[np.ndarray] = None
+    batch_sizes: Optional[Sequence[int]] = None
 
     def __post_init__(self) -> None:
         concept_probabilities = _probability_array(
@@ -136,6 +137,16 @@ class EnsemblePredictions:
                 )
             object.__setattr__(self, field_name, array)
 
+        if self.batch_sizes is not None:
+            batch_sizes = tuple(int(size) for size in self.batch_sizes)
+            if not batch_sizes or any(size < 1 for size in batch_sizes):
+                raise ValueError("batch_sizes must contain positive integers.")
+            if sum(batch_sizes) != sample_count:
+                raise ValueError(
+                    "batch_sizes must sum to the number of collected samples."
+                )
+            object.__setattr__(self, "batch_sizes", batch_sizes)
+
 
 def collect_ensemble_predictions(
     models: Sequence[Any],
@@ -144,7 +155,7 @@ def collect_ensemble_predictions(
     apply_label_softmax: bool = False,
     representation_key: Optional[str] = "CS",
     device: Any = None,
-    image_transform: Optional[Callable[[Any], Any]] = None,
+    image_transform: Optional[Callable[[Any, Any, Any], Any]] = None,
 ) -> EnsemblePredictions:
     """Collect BEARS outputs without averaging away the ensemble member axis.
 
@@ -174,6 +185,7 @@ def collect_ensemble_predictions(
     representation_batches = []
     label_targets = []
     concept_targets = []
+    batch_sizes = []
 
     with _inference_context():
         for batch_index, batch in enumerate(loader):
@@ -257,6 +269,7 @@ def collect_ensemble_predictions(
             label_batches.append(label_batch)
             label_targets.append(labels_array)
             concept_targets.append(concepts_array)
+            batch_sizes.append(batch_size)
 
             if representation_key is not None:
                 member_representations = []
@@ -290,6 +303,7 @@ def collect_ensemble_predictions(
         ),
         labels=np.concatenate(label_targets, axis=0),
         concepts=np.concatenate(concept_targets, axis=0),
+        batch_sizes=tuple(batch_sizes),
     )
 
 

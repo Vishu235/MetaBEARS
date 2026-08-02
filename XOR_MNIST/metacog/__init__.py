@@ -29,6 +29,7 @@ from .interventions import (
     neutralize_halfmnist_label_patch,
     remove_halfmnist_label_patch,
     shuffle_halfmnist_label_patch,
+    shuffled_patch_assignment_metrics,
     swap_halfmnist_image_halves,
 )
 from .experiment import (
@@ -75,5 +76,6 @@ __all__ = [
     "select_review_threshold",
     "shortcut_proxy_labels",
     "shuffle_halfmnist_label_patch",
+    "shuffled_patch_assignment_metrics",
     "swap_halfmnist_image_halves",
 ]

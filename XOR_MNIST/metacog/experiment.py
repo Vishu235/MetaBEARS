@@ -523,6 +523,7 @@ def _write_predictions(path: Path, predictions: EnsemblePredictions) -> None:
         member_representations=predictions.member_representations,
         labels=predictions.labels,
         concepts=predictions.concepts,
+        batch_sizes=np.asarray(predictions.batch_sizes, dtype=np.int64),
     )
 
 
@@ -563,6 +564,7 @@ def _collect_intervention_predictions(
         member_representations=transformed.member_representations,
         labels=transformed.labels,
         concepts=transformed.concepts,
+        batch_sizes=transformed.batch_sizes,
     )
 
 
@@ -693,6 +695,26 @@ def _intervention_metrics(
     }
 
 
+def _attach_assignment_metrics(
+    metrics: Dict[str, Any],
+    intervention: PredictionIntervention,
+    predictions: EnsemblePredictions,
+) -> Dict[str, Any]:
+    if intervention.assignment_metrics is None:
+        return metrics
+    if predictions.labels is None or predictions.batch_sizes is None:
+        raise ValueError(
+            "Intervention assignment metrics require labels and batch sizes."
+        )
+    metrics["input_assignment"] = dict(
+        intervention.assignment_metrics(
+            predictions.labels,
+            predictions.batch_sizes,
+        )
+    )
+    return metrics
+
+
 @dataclass(frozen=True)
 class MetaBEARSExperimentResult:
     """Artifacts returned after a validation/ID/OOD MetaBEARS run."""
@@ -720,6 +742,7 @@ def run_metabears_experiment(
     ece_bins: int = 15,
     intervention: Optional[PredictionIntervention] = None,
     run_configuration: Optional[Mapping[str, Any]] = None,
+    run_provenance: Optional[Mapping[str, Any]] = None,
 ) -> MetaBEARSExperimentResult:
     """Collect, calibrate, evaluate, and serialize a complete experiment."""
 
@@ -873,13 +896,21 @@ def run_metabears_experiment(
                 "Transformed concept probabilities are mapped back to the "
                 "original concept order before comparison."
             ),
-            "validation": _intervention_metrics(
+            "validation": _attach_assignment_metrics(
+                _intervention_metrics(
+                    validation_predictions,
+                    validation_intervention_predictions,
+                    calibration.validation_report,
+                ),
+                intervention,
                 validation_predictions,
-                validation_intervention_predictions,
-                calibration.validation_report,
             ),
-            "id_test": _intervention_metrics(
-                id_predictions, id_intervention_predictions, id_report
+            "id_test": _attach_assignment_metrics(
+                _intervention_metrics(
+                    id_predictions, id_intervention_predictions, id_report
+                ),
+                intervention,
+                id_predictions,
             ),
         }
 
@@ -897,10 +928,14 @@ def run_metabears_experiment(
                 ood_intervention_predictions,
             )
             if intervention_summary is not None:
-                intervention_summary["ood_test"] = _intervention_metrics(
+                intervention_summary["ood_test"] = _attach_assignment_metrics(
+                    _intervention_metrics(
+                        ood_predictions,
+                        ood_intervention_predictions,
+                        ood_report,
+                    ),
+                    intervention,
                     ood_predictions,
-                    ood_intervention_predictions,
-                    ood_report,
                 )
 
         combined_familiarity = np.concatenate(
@@ -925,6 +960,7 @@ def run_metabears_experiment(
 
     summary: Dict[str, Any] = {
         "configuration": _json_safe(dict(run_configuration or {})),
+        "provenance": _json_safe(dict(run_provenance or {})),
         "calibration": calibration.to_dict(),
         "splits": split_metrics,
         "shortcut_detection": shortcut_detection,

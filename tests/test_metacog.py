@@ -18,6 +18,7 @@ from XOR_MNIST.metacog import (
     familiarity_from_reference,
     probe_concept_consistency,
     select_review_threshold,
+    shuffled_patch_assignment_metrics,
     swap_halfmnist_image_halves,
 )
 from XOR_MNIST.metacog.demo import run_demo
@@ -171,6 +172,16 @@ class HalfMNISTInterventionTests(unittest.TestCase):
         self.assertEqual(patched[1, 0, 1:4, 9:12].mean(), 1.0)
         self.assertEqual(patched[1, 0, 1:4, 37:40].mean(), 1.0)
 
+    def test_shuffled_patch_reports_its_effective_mismatch_rate(self) -> None:
+        metrics = shuffled_patch_assignment_metrics(
+            np.array([1, 1, 4, 4, 2]),
+            (4, 1),
+        )
+
+        self.assertEqual(metrics["changed_assignment_count"], 4)
+        self.assertEqual(metrics["unchanged_assignment_count"], 1)
+        self.assertEqual(metrics["effective_mismatch_rate"], 0.8)
+
 
 class FakeBEARSModel:
     """Small NumPy model that follows the BEARS output dictionary contract."""
@@ -232,6 +243,7 @@ class EnsembleIntegrationTests(unittest.TestCase):
         self.assertEqual(collected.concept_member_probabilities.shape, (2, 3, 2, 3))
         self.assertEqual(collected.label_member_probabilities.shape, (2, 3, 3))
         self.assertEqual(collected.member_representations.shape, (2, 3, 4))
+        self.assertEqual(collected.batch_sizes, (2, 1))
         np.testing.assert_array_equal(collected.labels, np.array([0, 1, 2]))
         np.testing.assert_array_equal(
             collected.concepts,

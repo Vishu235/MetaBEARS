@@ -1,7 +1,7 @@
 """Label-preserving interventions for controlled MetaBEARS evaluation."""
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -20,6 +20,9 @@ class PredictionIntervention:
     description: str
     transform_images: Callable[[Any, Any, Any], Any]
     align_concept_probabilities: Callable[[np.ndarray], np.ndarray]
+    assignment_metrics: Optional[
+        Callable[[Any, Sequence[int]], Mapping[str, Any]]
+    ] = None
 
 
 def swap_halfmnist_image_halves(
@@ -62,6 +65,53 @@ def _label_array(labels: Any) -> np.ndarray:
     if hasattr(converted, "cpu"):
         converted = converted.cpu()
     return np.asarray(converted, dtype=np.int64).reshape(-1)
+
+
+def _least_matching_label_roll(labels: np.ndarray) -> np.ndarray:
+    """Preserve a label multiset while minimizing sample-level matches."""
+
+    target_labels = np.asarray(labels, dtype=np.int64).reshape(-1)
+    encoded_labels = target_labels.copy()
+    best_match_count = encoded_labels.size + 1
+    for shift in range(1, encoded_labels.size):
+        candidate = np.roll(target_labels, shift)
+        match_count = int(np.count_nonzero(candidate == target_labels))
+        if match_count < best_match_count:
+            encoded_labels = candidate
+            best_match_count = match_count
+    return encoded_labels
+
+
+def shuffled_patch_assignment_metrics(
+    labels: Any, batch_sizes: Sequence[int]
+) -> Mapping[str, Any]:
+    """Report how often the batch-preserving shuffle changes a patch label."""
+
+    target_labels = _label_array(labels)
+    normalized_sizes = tuple(int(size) for size in batch_sizes)
+    if any(size < 1 for size in normalized_sizes):
+        raise ValueError("batch_sizes must contain positive integers.")
+    if sum(normalized_sizes) != target_labels.size:
+        raise ValueError("batch_sizes must sum to the number of labels.")
+
+    changed_count = 0
+    offset = 0
+    for size in normalized_sizes:
+        batch_labels = target_labels[offset : offset + size]
+        reassigned = _least_matching_label_roll(batch_labels)
+        changed_count += int(np.count_nonzero(reassigned != batch_labels))
+        offset += size
+    sample_count = int(target_labels.size)
+    return {
+        "policy": "least_matching_cyclic_batch_rotation",
+        "batch_count": len(normalized_sizes),
+        "sample_count": sample_count,
+        "changed_assignment_count": changed_count,
+        "unchanged_assignment_count": sample_count - changed_count,
+        "effective_mismatch_rate": (
+            float(changed_count / sample_count) if sample_count else 0.0
+        ),
+    }
 
 
 def apply_halfmnist_label_patch(
@@ -141,13 +191,7 @@ def apply_halfmnist_label_patch(
     if mode == "conflict":
         encoded_labels = (encoded_labels + 1) % 9
     elif mode == "shuffled":
-        best_match_count = encoded_labels.size + 1
-        for shift in range(1, encoded_labels.size):
-            candidate = np.roll(target_labels, shift)
-            match_count = int(np.count_nonzero(candidate == target_labels))
-            if match_count < best_match_count:
-                encoded_labels = candidate
-                best_match_count = match_count
+        encoded_labels = _least_matching_label_roll(target_labels)
 
     cell_starts = [gap + index * (patch_size + gap) for index in range(cell_count)]
     row_start = gap
@@ -316,6 +360,7 @@ HALFMNIST_PATCH_SHUFFLED = PredictionIntervention(
     ),
     transform_images=shuffle_halfmnist_label_patch,
     align_concept_probabilities=align_identity_concept_probabilities,
+    assignment_metrics=shuffled_patch_assignment_metrics,
 )
 
 

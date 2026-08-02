@@ -9,6 +9,12 @@ from typing import Any, List, Optional, Sequence
 
 from .experiment import run_metabears_experiment
 from .interventions import get_intervention
+from .protocol import (
+    collect_run_provenance,
+    load_protocol,
+    validate_protocol_configuration,
+    validate_protocol_repository,
+)
 
 
 def _xor_root() -> Path:
@@ -143,6 +149,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=15,
         help="Number of fixed-width bins for task and concept ECE.",
     )
+    parser.add_argument(
+        "--protocol-manifest",
+        default=None,
+        help="Optional frozen protocol JSON; incompatible runs are rejected.",
+    )
+    parser.add_argument(
+        "--provenance-cache",
+        default=None,
+        help="Optional JSON cache for dataset and checkpoint SHA-256 values.",
+    )
     return parser
 
 
@@ -265,6 +281,44 @@ def _default_output_directory() -> Path:
     return repo_root / "colab_outputs" / "metabears_halfmnist" / timestamp
 
 
+def _run_configuration(
+    args: argparse.Namespace,
+    *,
+    ensemble_members: int,
+    ensemble_source: str,
+    checkpoint_paths: Sequence[Path],
+    command_arguments: Sequence[str],
+) -> dict:
+    return {
+        "dataset": args.dataset,
+        "model": args.model,
+        "task": args.task,
+        "seed": args.seed,
+        "ensemble_kind": args.ensemble_kind,
+        "ensemble_members": ensemble_members,
+        "ensemble_source": ensemble_source,
+        "checkpoints": [str(path) for path in checkpoint_paths],
+        "representation_key": args.representation_key,
+        "max_batches": args.max_batches,
+        "command_arguments": list(command_arguments),
+        "n_epochs": args.n_epochs,
+        "batch_size": args.batch_size,
+        "learning_rate": args.lr,
+        "exponential_decay": args.exp_decay,
+        "real_kl": args.real_kl,
+        "knowledge_aware_kl": args.knowledge_aware_kl,
+        "lambda_h": args.lambda_h,
+        "intervention": args.intervention,
+        "ece_bins": args.ece_bins,
+        "shortcut_patch_training": args.shortcut_patch_training,
+        "shortcut_patch_size": 3 if args.shortcut_patch_training else None,
+        "familiarity_validation_quantile": (
+            args.familiarity_validation_quantile
+        ),
+        "shortcut_fallback_quantile": args.shortcut_fallback_quantile,
+    }
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -307,6 +361,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.load_best_args:
         args = set_best_args_halfmnist(args)
+    protocol = load_protocol(args.protocol_manifest) if args.protocol_manifest else None
+    if protocol is not None:
+        preliminary_configuration = _run_configuration(
+            args,
+            ensemble_members=args.n_ensembles,
+            ensemble_source="pending",
+            checkpoint_paths=checkpoint_paths,
+            command_arguments=sys.argv[1:] if argv is None else argv,
+        )
+        try:
+            validate_protocol_configuration(protocol, preliminary_configuration)
+            validate_protocol_repository(protocol, _xor_root().parent)
+        except ValueError as error:
+            parser.error(str(error))
     set_random_seed(args.seed if args.seed is not None else 0)
 
     dataset = get_dataset(args)
@@ -314,6 +382,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.train_ensemble:
         ensemble = train_ensemble(dataset, validation_loader, args)
         ensemble_source = "trained"
+        base_seed = args.seed if args.seed is not None else 0
+        checkpoint_paths = [
+            _xor_root()
+            / "data"
+            / "ckpts"
+            / _checkpoint_filename(args, base_seed + member + 1)
+            for member in range(args.n_ensembles)
+        ]
     else:
         ensemble = load_ensemble(dataset, args, checkpoint_paths)
         ensemble_source = "checkpoints"
@@ -326,30 +402,39 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     intervention = (
         None if args.intervention == "none" else get_intervention(args.intervention)
     )
-    configuration = {
-        "dataset": args.dataset,
-        "model": args.model,
-        "task": args.task,
-        "seed": args.seed,
-        "ensemble_kind": args.ensemble_kind,
-        "ensemble_members": len(ensemble),
-        "ensemble_source": ensemble_source,
-        "checkpoints": [str(path) for path in checkpoint_paths],
-        "representation_key": args.representation_key,
-        "max_batches": args.max_batches,
-        "command_arguments": list(sys.argv[1:] if argv is None else argv),
-        "n_epochs": args.n_epochs,
-        "batch_size": args.batch_size,
-        "learning_rate": args.lr,
-        "exponential_decay": args.exp_decay,
-        "real_kl": args.real_kl,
-        "knowledge_aware_kl": args.knowledge_aware_kl,
-        "lambda_h": args.lambda_h,
-        "intervention": args.intervention,
-        "ece_bins": args.ece_bins,
-        "shortcut_patch_training": args.shortcut_patch_training,
-        "shortcut_patch_size": 3 if args.shortcut_patch_training else None,
-    }
+    configuration = _run_configuration(
+        args,
+        ensemble_members=len(ensemble),
+        ensemble_source=ensemble_source,
+        checkpoint_paths=checkpoint_paths,
+        command_arguments=sys.argv[1:] if argv is None else argv,
+    )
+    if protocol is not None:
+        configuration["protocol_id"] = protocol.protocol_id
+        configuration["protocol_sha256"] = protocol.sha256
+
+    repo_root = _xor_root().parent
+    if protocol is not None:
+        dataset_paths = [
+            repo_root / relative_path
+            for relative_path in protocol.data["dataset"]["artifact_paths"]
+        ]
+    else:
+        dataset_paths = [
+            _xor_root()
+            / "datasets"
+            / "utils"
+            / "2mnist_10digits"
+            / "2mnist_10digits.pt",
+            _xor_root() / "data" / "rn.npy",
+        ]
+    provenance = collect_run_provenance(
+        repo_root,
+        protocol=protocol,
+        dataset_paths=dataset_paths,
+        checkpoint_paths=checkpoint_paths,
+        hash_cache_path=args.provenance_cache,
+    )
     result = run_metabears_experiment(
         ensemble,
         validation_loader,
@@ -363,6 +448,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ece_bins=args.ece_bins,
         intervention=intervention,
         run_configuration=configuration,
+        run_provenance=provenance,
     )
 
     print(json.dumps(result.summary, indent=2, sort_keys=True))

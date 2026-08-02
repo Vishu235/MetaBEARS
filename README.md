@@ -89,6 +89,33 @@ zero, while `patch_shuffled` selects the cyclic batch rotation with the fewest
 label matches. The latter preserves the empirical one-hot patch distribution
 while breaking as much sample-level alignment as that batch permits.
 
+Frozen Phase-II experiments use `experiment_protocol.json`. The matrix runner
+rejects configuration drift, records Git/environment and SHA-256 provenance,
+trains each ensemble once, reuses its checkpoints across controls, and writes
+directly to a durable result root:
+
+```powershell
+python metabears_matrix.py --output-root <results-root> --seeds 10
+```
+
+To migrate the already-trained seed-0 members into the frozen layout without
+retraining, provide their checkpoint directory:
+
+```powershell
+python metabears_matrix.py --output-root <results-root> --seeds 0 --checkpoint-source <seed-0-checkpoints>
+```
+
+After seeds 0, 10, and 20 are complete, validate and aggregate the matrix:
+
+```powershell
+python aggregate_metabears_results.py --results-root <results-root>
+```
+
+The aggregator writes per-run and mean/standard-deviation CSV files,
+`aggregate_results.json`, and `aggregate_metrics.png` when Matplotlib is
+available. Incomplete or protocol-inconsistent matrices are rejected by
+default.
+
 Or train a fresh BEARS ensemble before evaluation:
 
 ```powershell

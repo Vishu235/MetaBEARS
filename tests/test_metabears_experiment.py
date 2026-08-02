@@ -181,6 +181,10 @@ class ExperimentRunnerTests(unittest.TestCase):
             align_concept_probabilities=lambda probabilities: np.asarray(
                 probabilities
             ).copy(),
+            assignment_metrics=lambda labels, batch_sizes: {
+                "effective_mismatch_rate": 0.5,
+                "batch_sizes": list(batch_sizes),
+            },
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             output = Path(temporary_directory)
@@ -214,6 +218,12 @@ class ExperimentRunnerTests(unittest.TestCase):
         self.assertFalse(semantic_detection["evaluable"])
         self.assertEqual(
             semantic_detection["non_evaluable_reason"], "no positive examples"
+        )
+        self.assertEqual(
+            result.summary["intervention"]["id_test"]["input_assignment"][
+                "effective_mismatch_rate"
+            ],
+            0.5,
         )
 
     def test_experiment_can_run_without_an_ood_split(self) -> None:
