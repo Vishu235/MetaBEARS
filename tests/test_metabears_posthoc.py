@@ -8,6 +8,7 @@ import numpy as np
 
 from aggregate_metabears_results import (
     evaluate_detector_matrix,
+    evaluate_external_negative_control_fusion_matrix,
     evaluate_intervention_calibrated_fusion_matrix,
     evaluate_leave_one_intervention_out_fusion_matrix,
     load_analysis_protocol,
@@ -456,6 +457,73 @@ class DetectorTargetTests(unittest.TestCase):
         self.assertEqual(
             {row["held_out_intervention"] for row in models},
             set(interventions),
+        )
+
+    def test_v5_fits_patch_interventions_without_loading_control_validation(
+        self,
+    ) -> None:
+        base, perturbed = prediction_pair()
+        training_interventions = (
+            "patch_shuffled",
+            "patch_removed",
+            "patch_conflict",
+            "patch_neutral",
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            rows = []
+            for intervention in training_interventions:
+                output = root / intervention
+                output.mkdir()
+                np.savez_compressed(
+                    output / "validation_predictions.npz", **base
+                )
+                np.savez_compressed(
+                    output / "validation_intervention_predictions.npz",
+                    **perturbed,
+                )
+                rows.append(
+                    {
+                        "seed": 0,
+                        "intervention": intervention,
+                        "summary_path": str(output / "run_summary.json"),
+                    }
+                )
+            control = root / "half_swap"
+            control.mkdir()
+            np.savez_compressed(control / "id_test_predictions.npz", **base)
+            np.savez_compressed(
+                control / "id_test_intervention_predictions.npz", **perturbed
+            )
+            rows.append(
+                {
+                    "seed": 0,
+                    "intervention": "half_swap",
+                    "summary_path": str(control / "run_summary.json"),
+                }
+            )
+            repo_root = Path(__file__).resolve().parents[1]
+            base_protocol = load_protocol(repo_root / "experiment_protocol.json")
+            analysis_protocol = load_analysis_protocol(
+                repo_root / "analysis_protocol_v5.json", base_protocol
+            )
+
+            metrics, _, _, models, thresholds = (
+                evaluate_external_negative_control_fusion_matrix(
+                    rows, analysis_protocol
+                )
+            )
+
+        self.assertEqual(len(metrics), 3)
+        self.assertEqual(len(models), 1)
+        self.assertEqual(len(thresholds), 3)
+        self.assertFalse(models[0]["negative_control_validation_used"])
+        self.assertEqual(models[0]["cross_validation_folds"], 4)
+        self.assertTrue(
+            all(
+                row["detector"] == "external_negative_control_fusion_v5"
+                for row in metrics
+            )
         )
 
 

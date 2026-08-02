@@ -55,6 +55,11 @@ DETECTOR_DESCRIPTIONS = {
         "Protocol-v4 fusion fitted on validation artifacts from every training "
         "intervention while excluding the evaluated intervention entirely."
     ),
+    "external_negative_control_fusion_v5": (
+        "Protocol-v5 fusion fitted and thresholded on the four patch-intervention "
+        "validation artifacts, then evaluated on the commutative half-swap "
+        "negative control without loading its validation data."
+    ),
 }
 
 TARGET_DEFINITIONS = {

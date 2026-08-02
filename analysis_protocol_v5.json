@@ -1,0 +1,55 @@
+{
+  "protocol_id": "metabears-half-swap-negative-control-v5",
+  "base_protocol_id": "metabears-halfmnist-v1",
+  "base_protocol_sha256": "2475895b327fb4d1f7dfe94beb4adbc92c2b1afd70097917f1047ed95ea529d6",
+  "parent_analysis_protocol_file": "analysis_protocol_v4.json",
+  "parent_analysis_protocol_id": "metabears-leave-one-intervention-out-v4",
+  "parent_analysis_protocol_sha256": "40ee1b30db109da62134d36c89b011716efa44837942e243664511e696db4198",
+  "description": "Pre-registered commutative half-swap negative-control evaluation. Fusion weights, empirical references, and the threshold are fitted on all four patch-intervention validation artifacts, then evaluated on half_swap ID-test artifacts without loading half_swap validation data.",
+  "model_training": "none",
+  "fit_split": "validation",
+  "fit_intervention": "all_patch_interventions",
+  "fit_target": "controlled_failure_union",
+  "evaluation_split": "id_test",
+  "evaluation_interventions": [
+    "patch_shuffled",
+    "patch_removed",
+    "patch_conflict",
+    "patch_neutral",
+    "half_swap"
+  ],
+  "training_interventions": [
+    "patch_shuffled",
+    "patch_removed",
+    "patch_conflict",
+    "patch_neutral"
+  ],
+  "negative_control_intervention": "half_swap",
+  "outer_evaluation": "external_negative_control",
+  "cross_validation": "leave_one_training_intervention_out",
+  "signals": [
+    "perturbation_js",
+    "task_distribution_js",
+    "concept_instability_without_perturbation",
+    "task_uncertainty",
+    "label_disagreement"
+  ],
+  "normalization": "pooled training-intervention validation empirical midrank percentile",
+  "normalization_scope": "patch_training_interventions_only",
+  "weight_grid_step": 0.1,
+  "cross_validation_folds": 4,
+  "selection_metric": "macro_intervention_blocked_out_of_fold_average_precision",
+  "selection_tiebreakers": [
+    "macro_intervention_blocked_out_of_fold_auroc",
+    "fewest_nonzero_weights",
+    "lexicographic_weights"
+  ],
+  "threshold_target_recall": 0.95,
+  "threshold_selection_split": "patch-intervention validation",
+  "threshold_constraint": "at least 95% recall separately on every patch training intervention",
+  "test_labels_used_for_fitting": false,
+  "negative_control_validation_used_for_fitting": false,
+  "negative_control_labels_used_for_fitting": false,
+  "expected_control_behavior": "Low task-invariance and aligned semantic-instability prevalence under a commutative digit-order transformation; review rate is reported rather than constrained post hoc.",
+  "claim_scope": "specificity check on a label-preserving structural transformation excluded entirely from fitting and calibration"
+}

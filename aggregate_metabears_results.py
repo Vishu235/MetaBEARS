@@ -99,6 +99,7 @@ DETECTOR_COMPARISON_CANDIDATES = (
     "validation_fitted_fusion_v2",
     "intervention_calibrated_fusion_v3",
     "leave_one_intervention_out_fusion_v4",
+    "external_negative_control_fusion_v5",
 )
 
 FUSION_THRESHOLD_METRICS = (
@@ -207,6 +208,9 @@ def load_analysis_protocol(
         if data.get("parent_analysis_protocol_sha256") != parent.sha256:
             raise ValueError("Analysis protocol references a different parent hash.")
         leave_one_out = data.get("outer_evaluation") == "leave_one_intervention_out"
+        external_negative_control = (
+            data.get("outer_evaluation") == "external_negative_control"
+        )
         if leave_one_out:
             if (
                 data.get("held_out_intervention_validation_used_for_fitting")
@@ -244,6 +248,74 @@ def load_analysis_protocol(
                 "signals",
                 "weight_grid_step",
                 "threshold_target_recall",
+            )
+        elif external_negative_control:
+            if data.get("negative_control_validation_used_for_fitting") is not False:
+                raise ValueError(
+                    "Negative-control validation data must be excluded from fitting."
+                )
+            if data.get("negative_control_labels_used_for_fitting") is not False:
+                raise ValueError(
+                    "Negative-control labels must be excluded from fitting."
+                )
+            training_interventions = data.get("training_interventions")
+            if (
+                not isinstance(training_interventions, list)
+                or len(training_interventions) < 3
+                or len(set(training_interventions)) != len(training_interventions)
+            ):
+                raise ValueError(
+                    "External negative-control analysis requires at least three "
+                    "unique training interventions."
+                )
+            evaluation = base_protocol.data["evaluation"]
+            negative_control = data.get("negative_control_intervention")
+            if negative_control != evaluation["negative_control"]:
+                raise ValueError(
+                    "Analysis negative control does not match the base protocol."
+                )
+            if negative_control in training_interventions:
+                raise ValueError(
+                    "Negative control must be excluded from training interventions."
+                )
+            allowed = {
+                evaluation["primary_intervention"],
+                *evaluation.get("secondary_interventions", []),
+                *evaluation.get("supplementary_interventions", []),
+            }
+            unsupported = sorted(set(training_interventions).difference(allowed))
+            if unsupported:
+                raise ValueError(
+                    f"Negative-control protocol has unfrozen training "
+                    f"interventions: {unsupported}"
+                )
+            evaluation_interventions = data.get("evaluation_interventions")
+            expected_evaluations = {*training_interventions, negative_control}
+            if (
+                not isinstance(evaluation_interventions, list)
+                or len(evaluation_interventions) != len(expected_evaluations)
+                or set(evaluation_interventions) != expected_evaluations
+            ):
+                raise ValueError(
+                    "Negative-control evaluation must contain every training "
+                    "intervention and the external control exactly once."
+                )
+            if int(data.get("cross_validation_folds", 0)) != len(
+                training_interventions
+            ):
+                raise ValueError(
+                    "Negative-control cross-validation folds must match the "
+                    "number of training interventions."
+                )
+            inherited_fields = (
+                "fit_split",
+                "fit_target",
+                "evaluation_split",
+                "signals",
+                "weight_grid_step",
+                "threshold_target_recall",
+                "selection_metric",
+                "selection_tiebreakers",
             )
         else:
             if data.get("normalization_labels_used") is not False:
@@ -1067,6 +1139,88 @@ def evaluate_leave_one_intervention_out_fusion_matrix(
     )
 
 
+def evaluate_external_negative_control_fusion_matrix(
+    rows: Sequence[Mapping[str, Any]],
+    analysis_protocol: FrozenProtocol,
+) -> tuple[
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+]:
+    """Fit on patch interventions and evaluate the excluded negative control."""
+
+    data = analysis_protocol.data
+    training_interventions = tuple(
+        str(name) for name in data["training_interventions"]
+    )
+    negative_control = str(data["negative_control_intervention"])
+    indexed = {
+        (int(row["seed"]), str(row["intervention"])): row for row in rows
+    }
+    seeds = sorted({int(row["seed"]) for row in rows})
+    metrics: List[Mapping[str, Any]] = []
+    precision_recall: List[Mapping[str, Any]] = []
+    risk_coverage: List[Mapping[str, Any]] = []
+    model_records: List[Mapping[str, Any]] = []
+    threshold_records: List[Mapping[str, Any]] = []
+    for seed in seeds:
+        required = (*training_interventions, negative_control)
+        missing = [name for name in required if (seed, name) not in indexed]
+        if missing:
+            raise ValueError(
+                f"Seed {seed} is missing v5 interventions: {', '.join(missing)}"
+            )
+        training_directories = {
+            name: Path(str(indexed[(seed, name)]["summary_path"])).parent
+            for name in training_interventions
+        }
+        model = fit_leave_one_intervention_out_fusion_from_result_directories(
+            training_directories,
+            signal_names=list(data["signals"]),
+            target_name=str(data["fit_target"]),
+            weight_grid_step=float(data["weight_grid_step"]),
+            threshold_target_recall=float(data["threshold_target_recall"]),
+        )
+        if model.cross_validation_folds != int(data["cross_validation_folds"]):
+            raise ValueError(
+                "Observed v5 intervention folds do not match the protocol."
+            )
+        model_records.append(
+            {
+                "seed": seed,
+                "negative_control_intervention": negative_control,
+                "training_interventions": "|".join(training_interventions),
+                "negative_control_validation_used": False,
+                "analysis_protocol_id": analysis_protocol.protocol_id,
+                "analysis_protocol_sha256": analysis_protocol.sha256,
+                **model.to_record(),
+            }
+        )
+        control_directory = Path(
+            str(indexed[(seed, negative_control)]["summary_path"])
+        ).parent
+        result = evaluate_fusion_result_directory(
+            model,
+            control_directory,
+            seed=seed,
+            intervention=negative_control,
+            detector_name="external_negative_control_fusion_v5",
+        )
+        metrics.extend(result.analysis.metrics)
+        precision_recall.extend(result.analysis.precision_recall_curve)
+        risk_coverage.extend(result.analysis.risk_coverage_curve)
+        threshold_records.extend(result.threshold_metrics)
+    return (
+        metrics,
+        precision_recall,
+        risk_coverage,
+        model_records,
+        threshold_records,
+    )
+
+
 def aggregate_fusion_threshold_results(
     rows: Sequence[Mapping[str, Any]],
 ) -> List[Mapping[str, Any]]:
@@ -1643,6 +1797,14 @@ def main() -> int:
         ),
         None,
     )
+    fusion_v5_protocol = next(
+        (
+            item
+            for item in protocol_chain
+            if item.data.get("outer_evaluation") == "external_negative_control"
+        ),
+        None,
+    )
     results_root = Path(args.results_root).expanduser().resolve()
     output_directory = (
         Path(args.output_dir).expanduser().resolve()
@@ -1697,6 +1859,8 @@ def main() -> int:
     fusion_v3_threshold_records: List[Mapping[str, Any]] = []
     fusion_v4_model_records: List[Mapping[str, Any]] = []
     fusion_v4_threshold_records: List[Mapping[str, Any]] = []
+    fusion_v5_model_records: List[Mapping[str, Any]] = []
+    fusion_v5_threshold_records: List[Mapping[str, Any]] = []
     detector_paired_rows: List[Dict[str, Any]] = []
     detector_paired_aggregates: List[Dict[str, Any]] = []
     if not args.skip_detector_analysis:
@@ -1716,6 +1880,16 @@ def main() -> int:
         precision_recall_rows.extend(fusion_precision_recall)
         risk_coverage_rows.extend(fusion_risk_coverage)
         if fusion_v3_protocol is not None:
+            fusion_v3_input_rows = rows
+            if fusion_v5_protocol is not None:
+                negative_control = str(
+                    fusion_v5_protocol.data["negative_control_intervention"]
+                )
+                fusion_v3_input_rows = [
+                    row
+                    for row in rows
+                    if str(row["intervention"]) != negative_control
+                ]
             (
                 fusion_v3_rows,
                 fusion_v3_precision_recall,
@@ -1724,7 +1898,7 @@ def main() -> int:
                 fusion_v3_reference_records,
                 fusion_v3_threshold_records,
             ) = evaluate_intervention_calibrated_fusion_matrix(
-                rows, fusion_v3_protocol
+                fusion_v3_input_rows, fusion_v3_protocol
             )
             detector_rows.extend(fusion_v3_rows)
             precision_recall_rows.extend(fusion_v3_precision_recall)
@@ -1742,11 +1916,25 @@ def main() -> int:
             detector_rows.extend(fusion_v4_rows)
             precision_recall_rows.extend(fusion_v4_precision_recall)
             risk_coverage_rows.extend(fusion_v4_risk_coverage)
+        if fusion_v5_protocol is not None:
+            (
+                fusion_v5_rows,
+                fusion_v5_precision_recall,
+                fusion_v5_risk_coverage,
+                fusion_v5_model_records,
+                fusion_v5_threshold_records,
+            ) = evaluate_external_negative_control_fusion_matrix(
+                rows, fusion_v5_protocol
+            )
+            detector_rows.extend(fusion_v5_rows)
+            precision_recall_rows.extend(fusion_v5_precision_recall)
+            risk_coverage_rows.extend(fusion_v5_risk_coverage)
         fusion_threshold_aggregates = aggregate_fusion_threshold_results(
             [
                 *fusion_threshold_records,
                 *fusion_v3_threshold_records,
                 *fusion_v4_threshold_records,
+                *fusion_v5_threshold_records,
             ]
         )
         detector_aggregates = aggregate_detector_results(detector_rows)
@@ -1808,6 +1996,14 @@ def main() -> int:
         _write_csv(
             output_directory / "fusion_v4_threshold_results.csv",
             fusion_v4_threshold_records,
+        )
+        _write_csv(
+            output_directory / "fusion_v5_models.csv",
+            fusion_v5_model_records,
+        )
+        _write_csv(
+            output_directory / "fusion_v5_threshold_results.csv",
+            fusion_v5_threshold_records,
         )
         _write_csv(
             output_directory / "fusion_threshold_aggregate_results.csv",
@@ -1873,6 +2069,8 @@ def main() -> int:
             "fusion_v3_threshold_results": fusion_v3_threshold_records,
             "fusion_v4_models": fusion_v4_model_records,
             "fusion_v4_threshold_results": fusion_v4_threshold_records,
+            "fusion_v5_models": fusion_v5_model_records,
+            "fusion_v5_threshold_results": fusion_v5_threshold_records,
             "curve_files": (
                 {
                     "precision_recall": "detector_precision_recall_curves.csv",

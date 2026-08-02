@@ -35,6 +35,7 @@ PROTOCOL_PATH = REPO_ROOT / "experiment_protocol.json"
 ANALYSIS_PROTOCOL_PATH = REPO_ROOT / "analysis_protocol_v2.json"
 ANALYSIS_PROTOCOL_V3_PATH = REPO_ROOT / "analysis_protocol_v3.json"
 ANALYSIS_PROTOCOL_V4_PATH = REPO_ROOT / "analysis_protocol_v4.json"
+ANALYSIS_PROTOCOL_V5_PATH = REPO_ROOT / "analysis_protocol_v5.json"
 RESULTS_FREEZE_V4_PATH = REPO_ROOT / "results_freeze_v4.json"
 
 
@@ -151,6 +152,36 @@ class FrozenProtocolTests(unittest.TestCase):
         )
         self.assertEqual(freeze["run_matrix"]["run_count"], 12)
         self.assertEqual(len(freeze["artifact"]["sha256"]), 64)
+
+    def test_v5_manifest_excludes_half_swap_from_fitting(self) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+
+        analysis = load_analysis_protocol(ANALYSIS_PROTOCOL_V5_PATH, protocol)
+        chain = analysis_protocol_chain(analysis, protocol)
+
+        self.assertEqual(
+            analysis.protocol_id,
+            "metabears-half-swap-negative-control-v5",
+        )
+        self.assertEqual(
+            [item.protocol_id for item in chain],
+            [
+                "metabears-validation-fusion-v2",
+                "metabears-intervention-calibrated-fusion-v3",
+                "metabears-leave-one-intervention-out-v4",
+                "metabears-half-swap-negative-control-v5",
+            ],
+        )
+        self.assertEqual(
+            analysis.data["negative_control_intervention"], "half_swap"
+        )
+        self.assertNotIn(
+            "half_swap", analysis.data["training_interventions"]
+        )
+        self.assertFalse(
+            analysis.data["negative_control_validation_used_for_fitting"]
+        )
+        self.assertEqual(analysis.data["cross_validation_folds"], 4)
 
     def test_provenance_hashes_artifacts_and_reuses_a_cache(self) -> None:
         protocol = load_protocol(PROTOCOL_PATH)

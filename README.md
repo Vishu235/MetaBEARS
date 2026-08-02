@@ -198,6 +198,31 @@ checks are versioned. Any later experimental change requires a new protocol
 and result freeze; report-only tables and figures must trace back to the frozen
 archive digest.
 
+Protocol v5 is a post-freeze negative-control extension defined in
+`analysis_protocol_v5.json`. It does not modify or replace the v4 evidence.
+The already implemented `half_swap` transformation exchanges the two
+HalfMNIST digits and then realigns their concept axes. Addition is commutative,
+so this is a label-preserving structural control. Generate only the new control
+artifacts from the existing checkpoints:
+
+```powershell
+python metabears_matrix.py --output-root <results-root> --seeds 0 10 20 --interventions half_swap --reuse-checkpoints --skip-completed
+```
+
+Then run the v5 analysis over the four patch interventions plus the control:
+
+```powershell
+python aggregate_metabears_results.py --results-root <results-root> --analysis-protocol analysis_protocol_v5.json --output-dir <results-root>/aggregate_v5
+```
+
+V5 fits its weights, empirical references, and threshold only on validation
+artifacts from the four patch interventions. It never loads `half_swap`
+validation data and evaluates the fixed detector only on the control's ID-test
+artifacts. The added outputs are `fusion_v5_models.csv` and
+`fusion_v5_threshold_results.csv`; the expected control behavior is low task
+and aligned semantic failure prevalence, with the observed review rate reported
+without post-hoc adjustment.
+
 For a deliberately summary-only aggregation that does not have the `.npz`
 prediction artifacts, add `--skip-detector-analysis`.
 
