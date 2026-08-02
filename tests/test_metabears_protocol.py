@@ -6,6 +6,7 @@ from pathlib import Path
 
 from aggregate_metabears_results import (
     METRIC_FIELDS,
+    analysis_protocol_chain,
     aggregate_fusion_threshold_results,
     aggregate_rows,
     aggregate_detector_results,
@@ -16,7 +17,11 @@ from aggregate_metabears_results import (
     paired_detector_analysis,
     reporting_provenance,
 )
-from metabears_matrix import build_experiment_command, expected_member_seeds
+from metabears_matrix import (
+    _load_existing_seed_runs,
+    build_experiment_command,
+    expected_member_seeds,
+)
 from XOR_MNIST.metacog.protocol import (
     collect_run_provenance,
     load_protocol,
@@ -28,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL_PATH = REPO_ROOT / "experiment_protocol.json"
 ANALYSIS_PROTOCOL_PATH = REPO_ROOT / "analysis_protocol_v2.json"
 ANALYSIS_PROTOCOL_V3_PATH = REPO_ROOT / "analysis_protocol_v3.json"
+ANALYSIS_PROTOCOL_V4_PATH = REPO_ROOT / "analysis_protocol_v4.json"
 
 
 def valid_configuration() -> dict:
@@ -104,6 +110,29 @@ class FrozenProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "learning_rate"):
             validate_protocol_configuration(protocol, configuration)
 
+    def test_v4_manifest_excludes_the_evaluation_intervention(self) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+
+        analysis = load_analysis_protocol(ANALYSIS_PROTOCOL_V4_PATH, protocol)
+        chain = analysis_protocol_chain(analysis, protocol)
+
+        self.assertEqual(
+            analysis.protocol_id,
+            "metabears-leave-one-intervention-out-v4",
+        )
+        self.assertEqual(
+            [item.protocol_id for item in chain],
+            [
+                "metabears-validation-fusion-v2",
+                "metabears-intervention-calibrated-fusion-v3",
+                "metabears-leave-one-intervention-out-v4",
+            ],
+        )
+        self.assertFalse(
+            analysis.data["held_out_intervention_validation_used_for_fitting"]
+        )
+        self.assertEqual(len(analysis.data["evaluation_interventions"]), 4)
+
     def test_provenance_hashes_artifacts_and_reuses_a_cache(self) -> None:
         protocol = load_protocol(PROTOCOL_PATH)
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -153,6 +182,45 @@ class MatrixRunnerTests(unittest.TestCase):
         self.assertEqual(command[command.index("--n_epochs") + 1], "30")
         self.assertEqual(command[command.index("--lr") + 1], "0.0005")
         self.assertEqual(command[command.index("--intervention") + 1], "patch_shuffled")
+
+    def test_supplementary_command_reuses_frozen_checkpoints(self) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+        checkpoints = [Path(f"member-{index}.pt") for index in range(5)]
+
+        command = build_experiment_command(
+            protocol,
+            base_seed=10,
+            intervention="patch_conflict",
+            output_directory=Path("result"),
+            provenance_cache=Path("cache.json"),
+            checkpoint_paths=checkpoints,
+        )
+
+        self.assertIn("--ensemble-checkpoints", command)
+        self.assertNotIn("--train-ensemble", command)
+        self.assertEqual(
+            command[command.index("--intervention") + 1], "patch_conflict"
+        )
+
+    def test_supplementary_manifest_preserves_existing_runs(self) -> None:
+        protocol = load_protocol(PROTOCOL_PATH)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            manifest = Path(temporary_directory) / "matrix_manifest.json"
+            manifest.write_text(
+                "{"
+                f'"protocol_id":"{protocol.protocol_id}",'
+                f'"protocol_sha256":"{protocol.sha256}",'
+                '"base_seed":0,'
+                '"runs":{"patch_shuffled":"existing/run_summary.json"}'
+                "}",
+                encoding="utf-8",
+            )
+
+            runs = _load_existing_seed_runs(manifest, protocol, 0)
+
+        self.assertEqual(
+            runs, {"patch_shuffled": "existing/run_summary.json"}
+        )
 
 
 class AggregationTests(unittest.TestCase):
@@ -332,7 +400,7 @@ class AggregationTests(unittest.TestCase):
     def test_reporting_provenance_hashes_analysis_sources(self) -> None:
         provenance = reporting_provenance(REPO_ROOT)
 
-        self.assertEqual(len(provenance["source_files"]), 4)
+        self.assertEqual(len(provenance["source_files"]), 5)
         self.assertTrue(
             all(len(record["sha256"]) == 64 for record in provenance["source_files"])
         )

@@ -20,6 +20,7 @@ from XOR_MNIST.metacog.posthoc import (
     calibrate_fusion_references_from_result_directory,
     evaluate_fusion_result_directory,
     evaluate_result_directory,
+    fit_leave_one_intervention_out_fusion_from_result_directories,
     fit_validation_fusion_from_result_directory,
 )
 from XOR_MNIST.metacog.protocol import (
@@ -86,6 +87,7 @@ DETECTOR_COMPARISON_METRICS = tuple(
 DETECTOR_COMPARISON_BASELINES = (
     "full_metabears",
     "validation_fitted_fusion_v2",
+    "intervention_calibrated_fusion_v3",
     "perturbation_js",
     "task_distribution_js",
     "concept_instability_with_perturbation",
@@ -96,6 +98,7 @@ DETECTOR_COMPARISON_CANDIDATES = (
     "full_metabears",
     "validation_fitted_fusion_v2",
     "intervention_calibrated_fusion_v3",
+    "leave_one_intervention_out_fusion_v4",
 )
 
 FUSION_THRESHOLD_METRICS = (
@@ -197,30 +200,70 @@ def load_analysis_protocol(
     )
     parent_file = data.get("parent_analysis_protocol_file")
     if parent_file is not None:
-        if data.get("normalization_labels_used") is not False:
-            raise ValueError(
-                "Conditioned normalization must prohibit validation-label use."
-            )
-        if data.get("secondary_intervention_labels_used_for_fitting") is not False:
-            raise ValueError(
-                "Secondary intervention labels must not be used for fitting."
-            )
         parent_path = (resolved.parent / str(parent_file)).resolve()
         parent = load_analysis_protocol(parent_path, base_protocol)
         if data.get("parent_analysis_protocol_id") != parent.protocol_id:
             raise ValueError("Analysis protocol references a different parent ID.")
         if data.get("parent_analysis_protocol_sha256") != parent.sha256:
             raise ValueError("Analysis protocol references a different parent hash.")
-        inherited_fields = (
-            "fit_split",
-            "fit_intervention",
-            "fit_target",
-            "evaluation_split",
-            "signals",
-            "weight_grid_step",
-            "cross_validation_folds",
-            "threshold_target_recall",
-        )
+        leave_one_out = data.get("outer_evaluation") == "leave_one_intervention_out"
+        if leave_one_out:
+            if (
+                data.get("held_out_intervention_validation_used_for_fitting")
+                is not False
+            ):
+                raise ValueError(
+                    "Held-out intervention validation data must be excluded."
+                )
+            if data.get("held_out_intervention_labels_used_for_fitting") is not False:
+                raise ValueError(
+                    "Held-out intervention labels must be excluded."
+                )
+            interventions = data.get("evaluation_interventions")
+            if not isinstance(interventions, list) or len(interventions) < 3:
+                raise ValueError(
+                    "Leave-one-intervention-out analysis requires at least "
+                    "three interventions."
+                )
+            evaluation = base_protocol.data["evaluation"]
+            allowed = {
+                evaluation["primary_intervention"],
+                *evaluation.get("secondary_interventions", []),
+                *evaluation.get("supplementary_interventions", []),
+                evaluation["negative_control"],
+            }
+            unsupported = sorted(set(interventions).difference(allowed))
+            if unsupported:
+                raise ValueError(
+                    f"Analysis protocol has unfrozen interventions: {unsupported}"
+                )
+            inherited_fields = (
+                "fit_split",
+                "fit_target",
+                "evaluation_split",
+                "signals",
+                "weight_grid_step",
+                "threshold_target_recall",
+            )
+        else:
+            if data.get("normalization_labels_used") is not False:
+                raise ValueError(
+                    "Conditioned normalization must prohibit validation-label use."
+                )
+            if data.get("secondary_intervention_labels_used_for_fitting") is not False:
+                raise ValueError(
+                    "Secondary intervention labels must not be used for fitting."
+                )
+            inherited_fields = (
+                "fit_split",
+                "fit_intervention",
+                "fit_target",
+                "evaluation_split",
+                "signals",
+                "weight_grid_step",
+                "cross_validation_folds",
+                "threshold_target_recall",
+            )
         changed = [
             name
             for name in inherited_fields
@@ -232,6 +275,28 @@ def load_analysis_protocol(
                 + ", ".join(changed)
             )
     return protocol
+
+
+def analysis_protocol_chain(
+    active: FrozenProtocol, base_protocol: FrozenProtocol
+) -> List[FrozenProtocol]:
+    """Return analysis manifests from the oldest parent to the active one."""
+
+    chain = [active]
+    visited = {active.path}
+    current = active
+    while current.data.get("parent_analysis_protocol_file") is not None:
+        parent_path = (
+            current.path.parent
+            / str(current.data["parent_analysis_protocol_file"])
+        ).resolve()
+        if parent_path in visited:
+            raise ValueError("Analysis protocol parent chain contains a cycle.")
+        current = load_analysis_protocol(parent_path, base_protocol)
+        chain.append(current)
+        visited.add(parent_path)
+    chain.reverse()
+    return chain
 
 
 def _artifact_fingerprint(records: Any, *, name: str) -> str:
@@ -672,6 +737,7 @@ def reporting_provenance(
         or (
             repo_root / "analysis_protocol_v2.json",
             repo_root / "analysis_protocol_v3.json",
+            repo_root / "analysis_protocol_v4.json",
         )
     )
     source_paths = [
@@ -911,6 +977,92 @@ def evaluate_intervention_calibrated_fusion_matrix(
         risk_coverage,
         model_records,
         reference_records,
+        threshold_records,
+    )
+
+
+def evaluate_leave_one_intervention_out_fusion_matrix(
+    rows: Sequence[Mapping[str, Any]],
+    analysis_protocol: FrozenProtocol,
+) -> tuple[
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+    List[Mapping[str, Any]],
+]:
+    """Fit on all other interventions, then evaluate the excluded control."""
+
+    data = analysis_protocol.data
+    interventions = tuple(str(name) for name in data["evaluation_interventions"])
+    indexed = {
+        (int(row["seed"]), str(row["intervention"])): row for row in rows
+    }
+    seeds = sorted({int(row["seed"]) for row in rows})
+    metrics: List[Mapping[str, Any]] = []
+    precision_recall: List[Mapping[str, Any]] = []
+    risk_coverage: List[Mapping[str, Any]] = []
+    model_records: List[Mapping[str, Any]] = []
+    threshold_records: List[Mapping[str, Any]] = []
+    for seed in seeds:
+        missing = [
+            name for name in interventions if (seed, name) not in indexed
+        ]
+        if missing:
+            raise ValueError(
+                f"Seed {seed} is missing v4 interventions: {', '.join(missing)}"
+            )
+        for held_out in interventions:
+            training = tuple(name for name in interventions if name != held_out)
+            training_directories = {
+                name: Path(str(indexed[(seed, name)]["summary_path"])).parent
+                for name in training
+            }
+            model = (
+                fit_leave_one_intervention_out_fusion_from_result_directories(
+                    training_directories,
+                    signal_names=list(data["signals"]),
+                    target_name=str(data["fit_target"]),
+                    weight_grid_step=float(data["weight_grid_step"]),
+                    threshold_target_recall=float(
+                        data["threshold_target_recall"]
+                    ),
+                )
+            )
+            if model.cross_validation_folds != int(data["cross_validation_folds"]):
+                raise ValueError(
+                    "Observed v4 intervention folds do not match the protocol."
+                )
+            model_records.append(
+                {
+                    "seed": seed,
+                    "held_out_intervention": held_out,
+                    "training_interventions": "|".join(training),
+                    "held_out_validation_used": False,
+                    "analysis_protocol_id": analysis_protocol.protocol_id,
+                    "analysis_protocol_sha256": analysis_protocol.sha256,
+                    **model.to_record(),
+                }
+            )
+            held_out_directory = Path(
+                str(indexed[(seed, held_out)]["summary_path"])
+            ).parent
+            result = evaluate_fusion_result_directory(
+                model,
+                held_out_directory,
+                seed=seed,
+                intervention=held_out,
+                detector_name="leave_one_intervention_out_fusion_v4",
+            )
+            metrics.extend(result.analysis.metrics)
+            precision_recall.extend(result.analysis.precision_recall_curve)
+            risk_coverage.extend(result.analysis.risk_coverage_curve)
+            threshold_records.extend(result.threshold_metrics)
+    return (
+        metrics,
+        precision_recall,
+        risk_coverage,
+        model_records,
         threshold_records,
     )
 
@@ -1249,6 +1401,7 @@ def _plot_detector_comparison(
         "full_metabears",
         "validation_fitted_fusion_v2",
         "intervention_calibrated_fusion_v3",
+        "leave_one_intervention_out_fusion_v4",
     )
     labels = (
         "Task entropy",
@@ -1259,6 +1412,7 @@ def _plot_detector_comparison(
         "MetaBEARS v1",
         "Validation fusion v2",
         "Calibrated fusion v3",
+        "LOIO fusion v4",
     )
     targets = ("task_invariance_failure", "semantic_instability")
     interventions = sorted({str(row["intervention"]) for row in detector_rows})
@@ -1323,6 +1477,7 @@ def _plot_detector_curves(
         "full_metabears",
         "validation_fitted_fusion_v2",
         "intervention_calibrated_fusion_v3",
+        "leave_one_intervention_out_fusion_v4",
     )
     colors = (
         "#7f7f7f",
@@ -1331,6 +1486,7 @@ def _plot_detector_curves(
         "#1f77b4",
         "#9467bd",
         "#d62728",
+        "#17becf",
     )
     target = "task_invariance_failure"
     figure, axes = plt.subplots(1, 2, figsize=(11, 4.5))
@@ -1447,7 +1603,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--protocol", default="experiment_protocol.json")
     parser.add_argument(
-        "--analysis-protocol", default="analysis_protocol_v3.json"
+        "--analysis-protocol", default="analysis_protocol_v4.json"
     )
     parser.add_argument("--results-root", required=True)
     parser.add_argument("--output-dir", default=None)
@@ -1469,13 +1625,24 @@ def main() -> int:
     analysis_protocol = load_analysis_protocol(
         repo_root / args.analysis_protocol, protocol
     )
-    parent_analysis_protocol = None
-    parent_file = analysis_protocol.data.get("parent_analysis_protocol_file")
-    if parent_file is not None:
-        parent_analysis_protocol = load_analysis_protocol(
-            analysis_protocol.path.parent / str(parent_file), protocol
-        )
-    fusion_v2_protocol = parent_analysis_protocol or analysis_protocol
+    protocol_chain = analysis_protocol_chain(analysis_protocol, protocol)
+    fusion_v2_protocol = protocol_chain[0]
+    fusion_v3_protocol = next(
+        (
+            item
+            for item in protocol_chain
+            if item.data.get("normalization_scope") == "per_seed_and_intervention"
+        ),
+        None,
+    )
+    fusion_v4_protocol = next(
+        (
+            item
+            for item in protocol_chain
+            if item.data.get("outer_evaluation") == "leave_one_intervention_out"
+        ),
+        None,
+    )
     results_root = Path(args.results_root).expanduser().resolve()
     output_directory = (
         Path(args.output_dir).expanduser().resolve()
@@ -1485,10 +1652,13 @@ def main() -> int:
     output_directory.mkdir(parents=True, exist_ok=True)
     evaluation = protocol.data["evaluation"]
     seeds = args.seeds or list(protocol.data["ensemble"]["base_seeds"])
-    interventions = args.interventions or [
-        evaluation["primary_intervention"],
-        *evaluation.get("secondary_interventions", []),
-    ]
+    interventions = args.interventions or analysis_protocol.data.get(
+        "evaluation_interventions",
+        [
+            evaluation["primary_intervention"],
+            *evaluation.get("secondary_interventions", []),
+        ],
+    )
     rows = discover_rows(
         protocol,
         results_root,
@@ -1509,7 +1679,7 @@ def main() -> int:
         comparator_interventions=secondary_interventions,
     )
     if (
-        analysis_protocol.data["fit_intervention"]
+        fusion_v2_protocol.data["fit_intervention"]
         != evaluation["primary_intervention"]
     ):
         raise ValueError(
@@ -1525,6 +1695,8 @@ def main() -> int:
     fusion_v3_model_records: List[Mapping[str, Any]] = []
     fusion_v3_reference_records: List[Mapping[str, Any]] = []
     fusion_v3_threshold_records: List[Mapping[str, Any]] = []
+    fusion_v4_model_records: List[Mapping[str, Any]] = []
+    fusion_v4_threshold_records: List[Mapping[str, Any]] = []
     detector_paired_rows: List[Dict[str, Any]] = []
     detector_paired_aggregates: List[Dict[str, Any]] = []
     if not args.skip_detector_analysis:
@@ -1543,7 +1715,7 @@ def main() -> int:
         detector_rows.extend(fusion_rows)
         precision_recall_rows.extend(fusion_precision_recall)
         risk_coverage_rows.extend(fusion_risk_coverage)
-        if parent_analysis_protocol is not None:
+        if fusion_v3_protocol is not None:
             (
                 fusion_v3_rows,
                 fusion_v3_precision_recall,
@@ -1552,13 +1724,30 @@ def main() -> int:
                 fusion_v3_reference_records,
                 fusion_v3_threshold_records,
             ) = evaluate_intervention_calibrated_fusion_matrix(
-                rows, analysis_protocol
+                rows, fusion_v3_protocol
             )
             detector_rows.extend(fusion_v3_rows)
             precision_recall_rows.extend(fusion_v3_precision_recall)
             risk_coverage_rows.extend(fusion_v3_risk_coverage)
+        if fusion_v4_protocol is not None:
+            (
+                fusion_v4_rows,
+                fusion_v4_precision_recall,
+                fusion_v4_risk_coverage,
+                fusion_v4_model_records,
+                fusion_v4_threshold_records,
+            ) = evaluate_leave_one_intervention_out_fusion_matrix(
+                rows, fusion_v4_protocol
+            )
+            detector_rows.extend(fusion_v4_rows)
+            precision_recall_rows.extend(fusion_v4_precision_recall)
+            risk_coverage_rows.extend(fusion_v4_risk_coverage)
         fusion_threshold_aggregates = aggregate_fusion_threshold_results(
-            [*fusion_threshold_records, *fusion_v3_threshold_records]
+            [
+                *fusion_threshold_records,
+                *fusion_v3_threshold_records,
+                *fusion_v4_threshold_records,
+            ]
         )
         detector_aggregates = aggregate_detector_results(detector_rows)
         (
@@ -1568,14 +1757,7 @@ def main() -> int:
 
     provenance = reporting_provenance(
         repo_root,
-        analysis_protocol_paths=[
-            fusion_v2_protocol.path,
-            *(
-                [analysis_protocol.path]
-                if analysis_protocol.path != fusion_v2_protocol.path
-                else []
-            ),
-        ],
+        analysis_protocol_paths=[item.path for item in protocol_chain],
     )
     _write_csv(output_directory / "run_results.csv", rows)
     _write_csv(output_directory / "aggregate_results.csv", aggregates)
@@ -1618,6 +1800,14 @@ def main() -> int:
         _write_csv(
             output_directory / "fusion_v3_threshold_results.csv",
             fusion_v3_threshold_records,
+        )
+        _write_csv(
+            output_directory / "fusion_v4_models.csv",
+            fusion_v4_model_records,
+        )
+        _write_csv(
+            output_directory / "fusion_v4_threshold_results.csv",
+            fusion_v4_threshold_records,
         )
         _write_csv(
             output_directory / "fusion_threshold_aggregate_results.csv",
@@ -1681,6 +1871,8 @@ def main() -> int:
             "fusion_v3_models": fusion_v3_model_records,
             "fusion_v3_reference_calibrations": fusion_v3_reference_records,
             "fusion_v3_threshold_results": fusion_v3_threshold_records,
+            "fusion_v4_models": fusion_v4_model_records,
+            "fusion_v4_threshold_results": fusion_v4_threshold_records,
             "curve_files": (
                 {
                     "precision_recall": "detector_precision_recall_curves.csv",

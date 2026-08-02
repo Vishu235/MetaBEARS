@@ -55,6 +55,8 @@ from .posthoc import (
     evaluate_result_directory,
     fit_validation_fusion,
     fit_validation_fusion_from_result_directory,
+    fit_leave_one_intervention_out_fusion,
+    fit_leave_one_intervention_out_fusion_from_result_directories,
     precision_recall_curve,
     risk_coverage_curve,
 )
@@ -97,6 +99,8 @@ __all__ = [
     "evaluate_result_directory",
     "fit_validation_fusion",
     "fit_validation_fusion_from_result_directory",
+    "fit_leave_one_intervention_out_fusion",
+    "fit_leave_one_intervention_out_fusion_from_result_directories",
     "familiarity_from_reference",
     "get_intervention",
     "neutralize_halfmnist_label_patch",

@@ -169,6 +169,28 @@ v2-minus-v1, v3-minus-v1, and v3-minus-v2 comparisons automatically. Existing
 v2 outputs and the frozen training protocol remain unchanged; rerunning model
 training is not required.
 
+Protocol v4 is defined in `analysis_protocol_v4.json`. It adds the frozen
+`patch_conflict` and `patch_neutral` probes and performs strict
+leave-one-intervention-out evaluation. For each seed and evaluated probe, the
+fusion weights, percentile references, and 95%-recall threshold are fitted
+only from the other three interventions' validation artifacts. The held-out
+intervention's validation predictions and labels are never loaded, and only
+its untouched ID-test artifacts are evaluated. Weight selection uses
+intervention-blocked folds rather than mixing examples from the same probe
+across random folds.
+
+Existing checkpoints can generate the supplementary artifacts without model
+training:
+
+```powershell
+python metabears_matrix.py --output-root <results-root> --seeds 0 10 20 --interventions patch_conflict patch_neutral --reuse-checkpoints --skip-completed
+```
+
+The runner preserves existing matrix-manifest entries when these controls are
+added. The default aggregator then expects all four patch interventions and
+writes `fusion_v4_models.csv` and `fusion_v4_threshold_results.csv` alongside
+the unchanged v1-v3 outputs and paired comparisons.
+
 For a deliberately summary-only aggregation that does not have the `.npz`
 prediction artifacts, add `--skip-detector-analysis`.
 

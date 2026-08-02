@@ -51,6 +51,10 @@ DETECTOR_DESCRIPTIONS = {
         "current intervention's unlabeled validation scores to recalibrate "
         "empirical percentile references."
     ),
+    "leave_one_intervention_out_fusion_v4": (
+        "Protocol-v4 fusion fitted on validation artifacts from every training "
+        "intervention while excluding the evaluated intervention entirely."
+    ),
 }
 
 TARGET_DEFINITIONS = {
@@ -94,6 +98,8 @@ class ValidationFusionModel:
     validation_precision: float
     validation_recall: float
     validation_f1: float
+    validation_group_count: int | None = None
+    validation_min_group_recall: float | None = None
 
     def score(
         self,
@@ -129,6 +135,8 @@ class ValidationFusionModel:
             "validation_precision": self.validation_precision,
             "validation_recall": self.validation_recall,
             "validation_f1": self.validation_f1,
+            "validation_group_count": self.validation_group_count,
+            "validation_min_group_recall": self.validation_min_group_recall,
         }
         record.update(
             {
@@ -538,6 +546,184 @@ def fit_validation_fusion(
     )
 
 
+def fit_leave_one_intervention_out_fusion(
+    validation_pairs: Mapping[
+        str, Tuple[Mapping[str, np.ndarray], Mapping[str, np.ndarray]]
+    ],
+    *,
+    signal_names: Sequence[str],
+    target_name: str = "controlled_failure_union",
+    weight_grid_step: float = 0.1,
+    threshold_target_recall: float = 0.95,
+) -> ValidationFusionModel:
+    """Fit using intervention-blocked validation folds only.
+
+    Each supplied intervention is held out once while percentile references
+    are built from the remaining interventions. The final references and
+    threshold pool all supplied training interventions. The future evaluation
+    intervention must therefore not appear in ``validation_pairs``.
+    """
+
+    if len(validation_pairs) < 2:
+        raise ValueError(
+            "Leave-one-intervention-out fitting requires at least two "
+            "training interventions."
+        )
+    if not 0.0 < weight_grid_step <= 1.0:
+        raise ValueError("weight_grid_step must lie within (0, 1].")
+    units = int(round(1.0 / weight_grid_step))
+    if not np.isclose(units * weight_grid_step, 1.0):
+        raise ValueError("weight_grid_step must divide one exactly.")
+    if not 0.0 < threshold_target_recall <= 1.0:
+        raise ValueError("threshold_target_recall must lie within (0, 1].")
+    names = tuple(str(name) for name in signal_names)
+    if not names or len(set(names)) != len(names):
+        raise ValueError("signal_names must be a non-empty unique sequence.")
+
+    interventions = tuple(sorted(str(name) for name in validation_pairs))
+    score_sets: Dict[str, Dict[str, np.ndarray]] = {}
+    target_sets: Dict[str, np.ndarray] = {}
+    for intervention in interventions:
+        base, perturbed = validation_pairs[intervention]
+        scores, targets = detector_scores_and_targets(base, perturbed)
+        if target_name not in targets:
+            raise ValueError(f"Unknown fusion target '{target_name}'.")
+        missing = [name for name in names if name not in scores]
+        if missing:
+            raise ValueError(f"Unknown fusion signals: {', '.join(missing)}")
+        score_sets[intervention] = {
+            name: np.asarray(scores[name], dtype=np.float64) for name in names
+        }
+        target_sets[intervention] = np.asarray(
+            targets[target_name], dtype=bool
+        )
+        positives = int(np.count_nonzero(target_sets[intervention]))
+        negatives = int(target_sets[intervention].size - positives)
+        if positives == 0 or negatives == 0:
+            raise ValueError(
+                "Each training intervention requires positive and negative cases."
+            )
+
+    transformed_folds = []
+    target_folds = []
+    for held_out in interventions:
+        training = [name for name in interventions if name != held_out]
+        transformed_folds.append(
+            np.column_stack(
+                [
+                    _empirical_midrank_percentile(
+                        np.concatenate(
+                            [score_sets[name][signal] for name in training]
+                        ),
+                        score_sets[held_out][signal],
+                    )
+                    for signal in names
+                ]
+            )
+        )
+        target_folds.append(target_sets[held_out])
+    best_key = None
+    best_weights = None
+    for composition in _integer_compositions(units, len(names)):
+        weights = np.asarray(composition, dtype=np.float64) / units
+        fold_scores = [matrix @ weights for matrix in transformed_folds]
+        average_precision = float(
+            np.mean(
+                [
+                    _average_precision(scores, target)
+                    for scores, target in zip(fold_scores, target_folds)
+                ]
+            )
+        )
+        auroc = float(
+            np.mean(
+                [
+                    _binary_auroc(scores, target)
+                    for scores, target in zip(fold_scores, target_folds)
+                ]
+            )
+        )
+        nonzero = int(np.count_nonzero(weights))
+        key = (
+            average_precision,
+            auroc,
+            -nonzero,
+            tuple(float(value) for value in weights),
+        )
+        if best_key is None or key > best_key:
+            best_key = key
+            best_weights = weights
+    if best_key is None or best_weights is None:
+        raise RuntimeError("Fusion weight search produced no candidates.")
+
+    references = {
+        signal: np.sort(
+            np.concatenate(
+                [score_sets[intervention][signal] for intervention in interventions]
+            )
+        )
+        for signal in names
+    }
+    full_scores = {
+        intervention: np.column_stack(
+            [
+                _empirical_midrank_percentile(
+                    references[signal], score_sets[intervention][signal]
+                )
+                for signal in names
+            ]
+        )
+        @ best_weights
+        for intervention in interventions
+    }
+    group_thresholds = []
+    for intervention in interventions:
+        threshold_row = next(
+            row
+            for row in precision_recall_curve(
+                full_scores[intervention], target_sets[intervention]
+            )
+            if row["threshold"] is not None
+            and float(row["recall"]) >= threshold_target_recall
+        )
+        group_thresholds.append(float(threshold_row["threshold"]))
+    threshold = min(group_thresholds)
+    validation_score = np.concatenate(
+        [full_scores[intervention] for intervention in interventions]
+    )
+    pooled_target = np.concatenate(
+        [target_sets[intervention] for intervention in interventions]
+    )
+    threshold_metrics = _flag_metrics(
+        validation_score >= threshold, pooled_target
+    )
+    minimum_group_recall = min(
+        _flag_metrics(
+            full_scores[intervention] >= threshold,
+            target_sets[intervention],
+        )["recall"]
+        for intervention in interventions
+    )
+    return ValidationFusionModel(
+        signal_names=names,
+        weights=best_weights,
+        references=references,
+        threshold=threshold,
+        threshold_target_recall=threshold_target_recall,
+        cross_validation_folds=len(interventions),
+        out_of_fold_average_precision=float(best_key[0]),
+        out_of_fold_auroc=float(best_key[1]),
+        validation_positive_count=int(np.count_nonzero(pooled_target)),
+        validation_prevalence=float(np.mean(pooled_target)),
+        validation_review_rate=float(threshold_metrics["review_rate"]),
+        validation_precision=float(threshold_metrics["precision"]),
+        validation_recall=float(threshold_metrics["recall"]),
+        validation_f1=float(threshold_metrics["f1"]),
+        validation_group_count=len(interventions),
+        validation_min_group_recall=float(minimum_group_recall),
+    )
+
+
 def precision_recall_curve(
     risk_scores: np.ndarray, labels: np.ndarray
 ) -> List[Dict[str, Any]]:
@@ -748,6 +934,27 @@ def fit_validation_fusion_from_result_directory(
         directory / "validation_intervention_predictions.npz"
     )
     return fit_validation_fusion(base, perturbed, **fit_arguments)
+
+
+def fit_leave_one_intervention_out_fusion_from_result_directories(
+    result_directories: Mapping[str, PathLike],
+    **fit_arguments: Any,
+) -> ValidationFusionModel:
+    """Load training-intervention validation artifacts and fit Protocol v4."""
+
+    validation_pairs = {}
+    for intervention, result_directory in result_directories.items():
+        directory = Path(result_directory).expanduser().resolve()
+        validation_pairs[str(intervention)] = (
+            _load_prediction_artifact(directory / "validation_predictions.npz"),
+            _load_prediction_artifact(
+                directory / "validation_intervention_predictions.npz"
+            ),
+        )
+    return fit_leave_one_intervention_out_fusion(
+        validation_pairs,
+        **fit_arguments,
+    )
 
 
 def calibrate_fusion_references_from_result_directory(

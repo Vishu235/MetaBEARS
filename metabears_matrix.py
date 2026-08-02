@@ -173,6 +173,28 @@ def _write_matrix_manifest(path: Path, manifest: Mapping[str, Any]) -> None:
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _load_existing_seed_runs(
+    path: Path, protocol: FrozenProtocol, base_seed: int
+) -> Dict[str, str]:
+    """Load prior run entries so a supplementary matrix extends its manifest."""
+
+    if not path.is_file():
+        return {}
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if loaded.get("protocol_id") != protocol.protocol_id:
+        raise ValueError(f"Existing matrix manifest has a different protocol: {path}")
+    if loaded.get("protocol_sha256") != protocol.sha256:
+        raise ValueError(
+            f"Existing matrix manifest has a different protocol hash: {path}"
+        )
+    if int(loaded.get("base_seed")) != int(base_seed):
+        raise ValueError(f"Existing matrix manifest has a different seed: {path}")
+    runs = loaded.get("runs", {})
+    if not isinstance(runs, Mapping):
+        raise ValueError(f"Existing matrix manifest has invalid run entries: {path}")
+    return {str(name): str(summary) for name, summary in runs.items()}
+
+
 def run_seed(
     protocol: FrozenProtocol,
     *,
@@ -234,7 +256,10 @@ def run_seed(
             shutil.copy2(local_path, target)
             checkpoint_paths.append(target.resolve())
 
-    completed_runs: Dict[str, str] = {}
+    seed_manifest_path = seed_root / "matrix_manifest.json"
+    completed_runs = _load_existing_seed_runs(
+        seed_manifest_path, protocol, base_seed
+    )
     for intervention in interventions:
         output_directory = seed_root / intervention
         summary_path = output_directory / "run_summary.json"
@@ -272,7 +297,7 @@ def run_seed(
         "checkpoints": [str(path) for path in checkpoint_paths],
         "runs": completed_runs,
     }
-    _write_matrix_manifest(seed_root / "matrix_manifest.json", seed_manifest)
+    _write_matrix_manifest(seed_manifest_path, seed_manifest)
     return seed_manifest
 
 

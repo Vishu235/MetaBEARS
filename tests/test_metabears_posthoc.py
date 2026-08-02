@@ -9,6 +9,7 @@ import numpy as np
 from aggregate_metabears_results import (
     evaluate_detector_matrix,
     evaluate_intervention_calibrated_fusion_matrix,
+    evaluate_leave_one_intervention_out_fusion_matrix,
     load_analysis_protocol,
 )
 from XOR_MNIST.metacog.protocol import load_protocol
@@ -23,6 +24,8 @@ from XOR_MNIST.metacog.posthoc import (
     evaluate_result_directory,
     fit_validation_fusion,
     fit_validation_fusion_from_result_directory,
+    fit_leave_one_intervention_out_fusion,
+    fit_leave_one_intervention_out_fusion_from_result_directories,
     precision_recall_curve,
     risk_coverage_curve,
 )
@@ -336,6 +339,123 @@ class DetectorTargetTests(unittest.TestCase):
                 row["detector"] == "intervention_calibrated_fusion_v3"
                 for row in metrics
             )
+        )
+
+    def test_leave_one_intervention_out_fit_uses_blocked_folds(self) -> None:
+        validation_pairs = {
+            name: prediction_pair()
+            for name in ("patch_shuffled", "patch_removed", "patch_conflict")
+        }
+
+        model = fit_leave_one_intervention_out_fusion(
+            validation_pairs,
+            signal_names=("perturbation_js", "task_distribution_js"),
+        )
+
+        self.assertEqual(model.cross_validation_folds, 3)
+        self.assertAlmostEqual(float(model.weights.sum()), 1.0)
+        self.assertGreaterEqual(model.validation_recall, 0.95)
+        self.assertGreaterEqual(model.validation_min_group_recall, 0.95)
+
+    def test_held_out_intervention_validation_is_not_loaded(self) -> None:
+        base, perturbed = prediction_pair()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            training_directories = {}
+            for intervention in (
+                "patch_shuffled",
+                "patch_removed",
+                "patch_conflict",
+            ):
+                output = root / intervention
+                output.mkdir()
+                np.savez_compressed(
+                    output / "validation_predictions.npz", **base
+                )
+                np.savez_compressed(
+                    output / "validation_intervention_predictions.npz",
+                    **perturbed,
+                )
+                training_directories[intervention] = output
+            held_out = root / "patch_neutral"
+            held_out.mkdir()
+            np.savez_compressed(held_out / "id_test_predictions.npz", **base)
+            np.savez_compressed(
+                held_out / "id_test_intervention_predictions.npz", **perturbed
+            )
+
+            model = (
+                fit_leave_one_intervention_out_fusion_from_result_directories(
+                    training_directories,
+                    signal_names=("perturbation_js", "task_distribution_js"),
+                )
+            )
+            result = evaluate_fusion_result_directory(
+                model,
+                held_out,
+                seed=0,
+                intervention="patch_neutral",
+                detector_name="leave_one_intervention_out_fusion_v4",
+            )
+
+        self.assertEqual(len(result.analysis.metrics), 3)
+        self.assertTrue(
+            all(
+                row["detector"] == "leave_one_intervention_out_fusion_v4"
+                for row in result.analysis.metrics
+            )
+        )
+
+    def test_v4_matrix_evaluates_each_intervention_once(self) -> None:
+        base, perturbed = prediction_pair()
+        interventions = (
+            "patch_shuffled",
+            "patch_removed",
+            "patch_conflict",
+            "patch_neutral",
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            rows = []
+            for intervention in interventions:
+                output = root / intervention
+                output.mkdir()
+                for split in ("validation", "id_test"):
+                    np.savez_compressed(
+                        output / f"{split}_predictions.npz", **base
+                    )
+                    np.savez_compressed(
+                        output / f"{split}_intervention_predictions.npz",
+                        **perturbed,
+                    )
+                rows.append(
+                    {
+                        "seed": 0,
+                        "intervention": intervention,
+                        "summary_path": str(output / "run_summary.json"),
+                    }
+                )
+            repo_root = Path(__file__).resolve().parents[1]
+            base_protocol = load_protocol(repo_root / "experiment_protocol.json")
+            analysis_protocol = load_analysis_protocol(
+                repo_root / "analysis_protocol_v4.json", base_protocol
+            )
+
+            metrics, _, _, models, thresholds = (
+                evaluate_leave_one_intervention_out_fusion_matrix(
+                    rows, analysis_protocol
+                )
+            )
+
+        self.assertEqual(len(metrics), 12)
+        self.assertEqual(len(models), 4)
+        self.assertEqual(len(thresholds), 12)
+        self.assertTrue(
+            all(not row["held_out_validation_used"] for row in models)
+        )
+        self.assertEqual(
+            {row["held_out_intervention"] for row in models},
+            set(interventions),
         )
 
 
