@@ -1635,15 +1635,17 @@ def _plot_aggregates(
                 s=24,
                 zorder=2,
             )
-            axis.scatter(
-                [position],
-                [100.0 * float(metric_rows[name]["mean"])],
-                color="#1f77b4",
-                edgecolor="black",
-                marker="D",
-                s=58,
-                zorder=3,
-            )
+            aggregate_mean = metric_rows[name].get("mean")
+            if aggregate_mean is not None:
+                axis.scatter(
+                    [position],
+                    [100.0 * float(aggregate_mean)],
+                    color="#1f77b4",
+                    edgecolor="black",
+                    marker="D",
+                    s=58,
+                    zorder=3,
+                )
         axis.set_title(title)
         axis.set_xticks(positions, interventions, rotation=20)
         axis.set_ylim(bottom=0.0)
@@ -1749,6 +1751,7 @@ def _plot_detector_comparison(
         "validation_fitted_fusion_v2",
         "intervention_calibrated_fusion_v3",
         "leave_one_intervention_out_fusion_v4",
+        "external_negative_control_fusion_v5",
     )
     labels = (
         "Task entropy",
@@ -1760,6 +1763,7 @@ def _plot_detector_comparison(
         "Validation fusion v2",
         "Calibrated fusion v3",
         "LOIO fusion v4",
+        "External control fusion v5",
     )
     targets = ("task_invariance_failure", "semantic_instability")
     interventions = sorted({str(row["intervention"]) for row in detector_rows})

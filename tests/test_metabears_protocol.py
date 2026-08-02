@@ -9,6 +9,7 @@ import numpy as np
 
 from aggregate_metabears_results import (
     METRIC_FIELDS,
+    _plot_aggregates,
     _validate_prediction_artifact_equivalence,
     analysis_protocol_chain,
     aggregate_fusion_threshold_results,
@@ -281,6 +282,37 @@ class MatrixRunnerTests(unittest.TestCase):
 
 
 class AggregationTests(unittest.TestCase):
+    def test_aggregate_plot_skips_an_undefined_control_metric(self) -> None:
+        rows = [
+            {
+                "seed": 0,
+                "intervention": "half_swap",
+                "id_accuracy_drop": 0.0,
+                "task_failure_f1": 0.0,
+                "semantic_instability_auroc": None,
+                "review_rate": 0.1,
+            }
+        ]
+        aggregates = [
+            {
+                "intervention": "half_swap",
+                "metric": metric,
+                "mean": value,
+            }
+            for metric, value in (
+                ("id_accuracy_drop", 0.0),
+                ("task_failure_f1", 0.0),
+                ("semantic_instability_auroc", None),
+                ("review_rate", 0.1),
+            )
+        ]
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory)
+            warning = _plot_aggregates(output, aggregates, rows)
+
+            if warning is None:
+                self.assertTrue((output / "aggregate_metrics.png").is_file())
+
     def test_prediction_equivalence_accepts_serialization_sha_mismatch(self) -> None:
         protocol = load_protocol(PROTOCOL_PATH)
         analysis = load_analysis_protocol(ANALYSIS_PROTOCOL_V5_PATH, protocol)
