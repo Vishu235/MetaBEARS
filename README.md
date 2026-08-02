@@ -121,6 +121,27 @@ checkpoint fingerprint so controls that reuse one ensemble are not counted as
 independent models. Incomplete or protocol-inconsistent matrices are rejected
 by default.
 
+When the saved prediction artifacts are present, the same command also runs a
+held-out post-hoc comparison of task uncertainty, task entropy, task-label
+disagreement, concept disagreement, intervention-only instability, and the
+full MetaBEARS score. These are threshold-free evaluations; no threshold is
+tuned on test labels. The additional outputs are:
+
+- `paired_control_results.csv` and `paired_control_aggregate_results.csv` for
+  within-seed primary-versus-control differences;
+- `detector_results.csv` and `detector_aggregate_results.csv` for AUROC,
+  average precision, area under the risk-coverage curve, risk at 80% automatic
+  coverage, and review rate required for 95% failure recall;
+- `detector_precision_recall_curves.csv` and
+  `detector_risk_coverage_curves.csv` for the complete per-seed curves;
+- `paired_control_effects.png`, `detector_average_precision.png`,
+  `detector_curves.png`, and `ood_metrics.png` for seed-level figures; and
+- `reporting_provenance.json`, which records the reporting Git commit,
+  command, environment, and SHA-256 hashes of the analysis source files.
+
+For a deliberately summary-only aggregation that does not have the `.npz`
+prediction artifacts, add `--skip-detector-analysis`.
+
 Or train a fresh BEARS ensemble before evaluation:
 
 ```powershell

@@ -2,12 +2,23 @@
 
 import argparse
 import csv
+from datetime import datetime, timezone
+import hashlib
+from importlib import metadata as package_metadata
 import json
 import math
+import platform
 from pathlib import Path
 from statistics import mean, stdev
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+import subprocess
+import sys
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from XOR_MNIST.metacog.posthoc import (
+    DETECTOR_DESCRIPTIONS,
+    TARGET_DEFINITIONS,
+    evaluate_result_directory,
+)
 from XOR_MNIST.metacog.protocol import (
     FrozenProtocol,
     load_protocol,
@@ -40,6 +51,29 @@ OOD_METRIC_FIELDS = (
     "ood_auroc",
     "ood_average_precision",
     "ood_f1",
+)
+
+PAIRED_METRIC_FIELDS = (
+    "id_accuracy_drop",
+    "task_failure_prevalence",
+    "task_failure_precision",
+    "task_failure_recall",
+    "task_failure_f1",
+    "semantic_instability_prevalence",
+    "semantic_instability_auroc",
+    "semantic_instability_average_precision",
+    "semantic_instability_f1",
+    "review_rate",
+    "coverage",
+)
+
+DETECTOR_AGGREGATE_METRICS = (
+    "prevalence",
+    "auroc",
+    "average_precision",
+    "aurc",
+    "risk_at_80_coverage",
+    "review_rate_at_95_recall",
 )
 
 # Two-sided 95% Student-t critical values. Frozen experiments currently use
@@ -377,6 +411,219 @@ def aggregate_unique_models(
     return model_rows, aggregates
 
 
+def paired_control_analysis(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    primary_intervention: str,
+    comparator_interventions: Sequence[str],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Compare controls within seed so shared ensembles remain paired."""
+
+    indexed = {
+        (int(row["seed"]), str(row["intervention"])): row for row in rows
+    }
+    seeds = sorted({int(row["seed"]) for row in rows})
+    paired_rows: List[Dict[str, Any]] = []
+    aggregate_rows_output: List[Dict[str, Any]] = []
+    for comparator in comparator_interventions:
+        for seed in seeds:
+            primary = indexed.get((seed, primary_intervention))
+            secondary = indexed.get((seed, comparator))
+            if primary is None or secondary is None:
+                continue
+            if primary["checkpoint_fingerprint"] != secondary["checkpoint_fingerprint"]:
+                raise ValueError(
+                    f"Paired controls for seed {seed} do not share checkpoints."
+                )
+            for metric in PAIRED_METRIC_FIELDS:
+                primary_value = primary.get(metric)
+                comparator_value = secondary.get(metric)
+                if primary_value is None or comparator_value is None:
+                    continue
+                paired_rows.append(
+                    {
+                        "seed": seed,
+                        "primary_intervention": primary_intervention,
+                        "comparator_intervention": comparator,
+                        "metric": metric,
+                        "primary_value": float(primary_value),
+                        "comparator_value": float(comparator_value),
+                        "paired_difference": (
+                            float(primary_value) - float(comparator_value)
+                        ),
+                    }
+                )
+
+        for metric in PAIRED_METRIC_FIELDS:
+            selected = [
+                row
+                for row in paired_rows
+                if row["comparator_intervention"] == comparator
+                and row["metric"] == metric
+            ]
+            values = [float(row["paired_difference"]) for row in selected]
+            if not values:
+                continue
+            aggregate = _aggregate_values(
+                values,
+                grouping_key="comparison",
+                grouping_value=f"{primary_intervention}_minus_{comparator}",
+                metric=metric,
+            )
+            aggregate.update(
+                {
+                    "primary_intervention": primary_intervention,
+                    "comparator_intervention": comparator,
+                }
+            )
+            aggregate_rows_output.append(aggregate)
+    return paired_rows, aggregate_rows_output
+
+
+def aggregate_detector_results(
+    detector_rows: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Aggregate threshold-free detector results across independent seeds."""
+
+    groups = sorted(
+        {
+            (
+                str(row["intervention"]),
+                str(row["target"]),
+                str(row["detector"]),
+            )
+            for row in detector_rows
+        }
+    )
+    output: List[Dict[str, Any]] = []
+    for intervention, target, detector in groups:
+        selected = [
+            row
+            for row in detector_rows
+            if row["intervention"] == intervention
+            and row["target"] == target
+            and row["detector"] == detector
+        ]
+        for metric in DETECTOR_AGGREGATE_METRICS:
+            values = [
+                float(row[metric])
+                for row in selected
+                if row.get(metric) is not None
+            ]
+            aggregate = _aggregate_values(
+                values,
+                grouping_key="intervention",
+                grouping_value=intervention,
+                metric=metric,
+            )
+            aggregate.update({"target": target, "detector": detector})
+            output.append(aggregate)
+    return output
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def reporting_provenance(repo_root: Path) -> Dict[str, Any]:
+    """Record which reporting code produced an aggregate result bundle."""
+
+    git_metadata: Dict[str, Any] = {"commit": None, "dirty": None}
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        git_metadata = {"commit": commit, "dirty": bool(status.strip())}
+    except (OSError, subprocess.CalledProcessError):
+        pass
+
+    source_paths = (
+        repo_root / "aggregate_metabears_results.py",
+        repo_root / "XOR_MNIST" / "metacog" / "posthoc.py",
+    )
+    package_versions = {}
+    for package in ("numpy", "matplotlib"):
+        try:
+            package_versions[package] = package_metadata.version(package)
+        except package_metadata.PackageNotFoundError:
+            package_versions[package] = None
+
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "command_arguments": list(sys.argv[1:]),
+        "git": git_metadata,
+        "environment": {
+            "python": sys.version,
+            "platform": platform.platform(),
+            "packages": package_versions,
+        },
+        "source_files": [
+            {
+                "path": str(path.relative_to(repo_root)),
+                "sha256": _sha256(path),
+            }
+            for path in source_paths
+        ],
+    }
+
+
+def evaluate_detector_matrix(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[List[Mapping[str, Any]], List[Mapping[str, Any]], List[Mapping[str, Any]]]:
+    """Evaluate saved held-out predictions for every seed/control run."""
+
+    metrics: List[Mapping[str, Any]] = []
+    precision_recall: List[Mapping[str, Any]] = []
+    risk_coverage: List[Mapping[str, Any]] = []
+    for row in rows:
+        result_directory = Path(str(row["summary_path"])).parent
+        analysis = evaluate_result_directory(
+            result_directory,
+            seed=int(row["seed"]),
+            intervention=str(row["intervention"]),
+        )
+        full_semantic = next(
+            metric
+            for metric in analysis.metrics
+            if metric["target"] == "semantic_instability"
+            and metric["detector"] == "full_metabears"
+        )
+        expected_auroc = row.get("semantic_instability_auroc")
+        expected_ap = row.get("semantic_instability_average_precision")
+        for observed, expected, name in (
+            (full_semantic["auroc"], expected_auroc, "AUROC"),
+            (full_semantic["average_precision"], expected_ap, "average precision"),
+        ):
+            if observed is None and expected is None:
+                continue
+            if observed is None or expected is None or not math.isclose(
+                float(observed), float(expected), rel_tol=1e-10, abs_tol=1e-12
+            ):
+                raise ValueError(
+                    "Post-hoc full MetaBEARS semantic "
+                    f"{name} does not reproduce the frozen run summary."
+                )
+        metrics.extend(analysis.metrics)
+        precision_recall.extend(analysis.precision_recall_curve)
+        risk_coverage.extend(analysis.risk_coverage_curve)
+    return metrics, precision_recall, risk_coverage
+
+
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     if not rows:
         return
@@ -413,13 +660,33 @@ def _plot_aggregates(
             for row in aggregates
             if row["metric"] == metric
         }
-        values = [100.0 * metric_rows[name]["mean"] for name in interventions]
-        errors = [
-            100.0 * (metric_rows[name]["sample_std"] or 0.0)
-            for name in interventions
-        ]
         positions = list(range(len(interventions)))
-        axis.bar(positions, values, yerr=errors, capsize=4, alpha=0.75)
+        seeds = sorted({int(row["seed"]) for row in rows})
+        for seed in seeds:
+            seed_values = []
+            seed_positions = []
+            for position, name in zip(positions, interventions):
+                match = next(
+                    (
+                        row
+                        for row in rows
+                        if int(row["seed"]) == seed
+                        and row["intervention"] == name
+                        and row.get(metric) is not None
+                    ),
+                    None,
+                )
+                if match is not None:
+                    seed_positions.append(position)
+                    seed_values.append(100.0 * float(match[metric]))
+            if seed_values:
+                axis.plot(
+                    seed_positions,
+                    seed_values,
+                    color="0.75",
+                    linewidth=1.0,
+                    zorder=1,
+                )
         for position, name in zip(positions, interventions):
             seed_values = [
                 100.0 * float(row[metric])
@@ -432,6 +699,15 @@ def _plot_aggregates(
                 color="black",
                 marker="o",
                 s=24,
+                zorder=2,
+            )
+            axis.scatter(
+                [position],
+                [100.0 * float(metric_rows[name]["mean"])],
+                color="#1f77b4",
+                edgecolor="black",
+                marker="D",
+                s=58,
                 zorder=3,
             )
         axis.set_title(title)
@@ -441,11 +717,270 @@ def _plot_aggregates(
             axis.set_ylim(0.0, 100.0)
         axis.grid(axis="y", alpha=0.25)
     figure.suptitle(
-        "Mean +/- sample SD; points are independent ensemble seeds",
+        "Circles are independent ensemble seeds; diamonds are means",
         fontsize=11,
     )
     figure.tight_layout()
     figure.savefig(output_directory / "aggregate_metrics.png", dpi=180)
+    plt.close(figure)
+    return None
+
+
+def _plot_paired_effects(
+    output_directory: Path,
+    paired_rows: Sequence[Mapping[str, Any]],
+    paired_aggregates: Sequence[Mapping[str, Any]],
+) -> Optional[str]:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return "matplotlib is unavailable; paired-control plots were skipped."
+
+    metrics = (
+        ("id_accuracy_drop", "Accuracy-drop difference (pp)"),
+        ("task_failure_f1", "Task-failure F1 difference (pp)"),
+        ("semantic_instability_auroc", "Semantic AUROC difference (pp)"),
+        ("review_rate", "Review-rate difference (pp)"),
+    )
+    comparisons = sorted(
+        {str(row["comparator_intervention"]) for row in paired_rows}
+    )
+    figure, axes = plt.subplots(2, 2, figsize=(10, 7))
+    for axis, (metric, title) in zip(axes.flat, metrics):
+        positions = list(range(len(comparisons)))
+        for position, comparator in zip(positions, comparisons):
+            values = [
+                100.0 * float(row["paired_difference"])
+                for row in paired_rows
+                if row["metric"] == metric
+                and row["comparator_intervention"] == comparator
+            ]
+            aggregate = next(
+                (
+                    row
+                    for row in paired_aggregates
+                    if row["metric"] == metric
+                    and row["comparator_intervention"] == comparator
+                ),
+                None,
+            )
+            if not values or aggregate is None:
+                continue
+            axis.scatter([position] * len(values), values, color="black", s=28)
+            axis.scatter(
+                [position],
+                [100.0 * float(aggregate["mean"])],
+                color="#d62728",
+                edgecolor="black",
+                marker="D",
+                s=62,
+                zorder=3,
+            )
+        axis.axhline(0.0, color="0.5", linewidth=1.0, linestyle="--")
+        axis.set_title(title)
+        axis.set_xticks(positions, comparisons, rotation=15)
+        axis.grid(axis="y", alpha=0.25)
+    figure.suptitle(
+        "Primary minus comparator; circles are seeds and diamonds are means",
+        fontsize=11,
+    )
+    figure.tight_layout()
+    figure.savefig(output_directory / "paired_control_effects.png", dpi=180)
+    plt.close(figure)
+    return None
+
+
+def _plot_detector_comparison(
+    output_directory: Path,
+    detector_rows: Sequence[Mapping[str, Any]],
+) -> Optional[str]:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return "matplotlib is unavailable; detector plots were skipped."
+
+    detectors = (
+        "task_entropy",
+        "ensemble_concept_disagreement",
+        "concept_instability_without_perturbation",
+        "perturbation_js",
+        "full_metabears",
+    )
+    labels = ("Task entropy", "Concept JS", "Base instability", "Perturbation JS", "MetaBEARS")
+    targets = ("task_invariance_failure", "semantic_instability")
+    interventions = sorted({str(row["intervention"]) for row in detector_rows})
+    figure, axes = plt.subplots(
+        len(targets), len(interventions), figsize=(13, 7), squeeze=False
+    )
+    for target_index, target in enumerate(targets):
+        for intervention_index, intervention in enumerate(interventions):
+            axis = axes[target_index, intervention_index]
+            for position, detector in enumerate(detectors):
+                values = [
+                    100.0 * float(row["average_precision"])
+                    for row in detector_rows
+                    if row["target"] == target
+                    and row["intervention"] == intervention
+                    and row["detector"] == detector
+                    and row.get("average_precision") is not None
+                ]
+                if not values:
+                    continue
+                axis.scatter([position] * len(values), values, color="black", s=22)
+                axis.scatter(
+                    [position],
+                    [mean(values)],
+                    color="#2ca02c",
+                    edgecolor="black",
+                    marker="D",
+                    s=54,
+                    zorder=3,
+                )
+            axis.set_title(f"{intervention}: {target.replace('_', ' ')}")
+            axis.set_xticks(range(len(detectors)), labels, rotation=25, ha="right")
+            axis.set_ylabel("Average precision (%)")
+            axis.set_ylim(0.0, 100.0)
+            axis.grid(axis="y", alpha=0.25)
+    figure.suptitle("Detector baselines on controlled held-out targets", fontsize=12)
+    figure.tight_layout()
+    figure.savefig(output_directory / "detector_average_precision.png", dpi=180)
+    plt.close(figure)
+    return None
+
+
+def _plot_detector_curves(
+    output_directory: Path,
+    precision_recall_rows: Sequence[Mapping[str, Any]],
+    risk_coverage_rows: Sequence[Mapping[str, Any]],
+    *,
+    primary_intervention: str,
+) -> Optional[str]:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return "matplotlib is unavailable; detector curves were skipped."
+
+    detectors = (
+        "task_entropy",
+        "concept_instability_without_perturbation",
+        "perturbation_js",
+        "full_metabears",
+    )
+    colors = ("#7f7f7f", "#ff7f0e", "#2ca02c", "#1f77b4")
+    target = "task_invariance_failure"
+    figure, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+    for detector, color in zip(detectors, colors):
+        seeds = sorted(
+            {
+                int(row["seed"])
+                for row in precision_recall_rows
+                if row["intervention"] == primary_intervention
+                and row["target"] == target
+                and row["detector"] == detector
+            }
+        )
+        for seed_index, seed in enumerate(seeds):
+            pr = [
+                row
+                for row in precision_recall_rows
+                if row["intervention"] == primary_intervention
+                and row["target"] == target
+                and row["detector"] == detector
+                and int(row["seed"]) == seed
+            ]
+            rc = [
+                row
+                for row in risk_coverage_rows
+                if row["intervention"] == primary_intervention
+                and row["target"] == target
+                and row["detector"] == detector
+                and int(row["seed"]) == seed
+            ]
+            label = detector.replace("_", " ") if seed_index == 0 else None
+            axes[0].plot(
+                [float(row["recall"]) for row in pr],
+                [float(row["precision"]) for row in pr],
+                color=color,
+                alpha=0.45,
+                linewidth=1.2,
+                label=label,
+            )
+            axes[1].plot(
+                [float(row["coverage"]) for row in rc],
+                [float(row["selective_risk"]) for row in rc],
+                color=color,
+                alpha=0.45,
+                linewidth=1.2,
+                label=label,
+            )
+    axes[0].set(xlabel="Recall", ylabel="Precision", xlim=(0, 1), ylim=(0, 1))
+    axes[0].set_title("Precision-recall by seed")
+    axes[1].set(
+        xlabel="Automatic coverage",
+        ylabel="Failure risk among accepted samples",
+        xlim=(0, 1),
+    )
+    axes[1].set_ylim(bottom=0)
+    axes[1].set_title("Risk-coverage by seed")
+    for axis in axes:
+        axis.grid(alpha=0.25)
+        axis.legend(fontsize=8)
+    figure.suptitle(f"{primary_intervention}: controlled task failures", fontsize=12)
+    figure.tight_layout()
+    figure.savefig(output_directory / "detector_curves.png", dpi=180)
+    plt.close(figure)
+    return None
+
+
+def _plot_ood_metrics(
+    output_directory: Path, model_rows: Sequence[Mapping[str, Any]]
+) -> Optional[str]:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return "matplotlib is unavailable; OOD plots were skipped."
+
+    metrics = (
+        ("ood_auroc", "AUROC"),
+        ("ood_average_precision", "Average precision"),
+        ("ood_f1", "F1"),
+    )
+    figure, axis = plt.subplots(figsize=(7, 4.5))
+    for position, (metric, label) in enumerate(metrics):
+        values = [
+            100.0 * float(row[metric])
+            for row in model_rows
+            if row.get(metric) is not None
+        ]
+        axis.scatter([position] * len(values), values, color="black", s=28)
+        axis.scatter(
+            [position],
+            [mean(values)],
+            color="#9467bd",
+            edgecolor="black",
+            marker="D",
+            s=62,
+            zorder=3,
+        )
+    axis.set_xticks(range(len(metrics)), [label for _, label in metrics])
+    axis.set_ylabel("Score (%)")
+    axis.set_ylim(90.0, 100.0)
+    axis.grid(axis="y", alpha=0.25)
+    axis.set_title("OOD detection across unique ensembles")
+    figure.tight_layout()
+    figure.savefig(output_directory / "ood_metrics.png", dpi=180)
     plt.close(figure)
     return None
 
@@ -460,6 +995,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", default=None)
     parser.add_argument("--interventions", nargs="+", default=None)
     parser.add_argument("--allow-partial", action="store_true")
+    parser.add_argument(
+        "--skip-detector-analysis",
+        action="store_true",
+        help="Aggregate summaries without loading held-out prediction artifacts.",
+    )
     return parser.parse_args()
 
 
@@ -489,19 +1029,102 @@ def main() -> int:
     )
     aggregates = aggregate_rows(rows)
     model_rows, model_aggregates = aggregate_unique_models(rows)
+    secondary_interventions = [
+        intervention
+        for intervention in interventions
+        if intervention != evaluation["primary_intervention"]
+    ]
+    paired_rows, paired_aggregates = paired_control_analysis(
+        rows,
+        primary_intervention=evaluation["primary_intervention"],
+        comparator_interventions=secondary_interventions,
+    )
+    detector_rows: Sequence[Mapping[str, Any]] = []
+    detector_aggregates: Sequence[Mapping[str, Any]] = []
+    precision_recall_rows: Sequence[Mapping[str, Any]] = []
+    risk_coverage_rows: Sequence[Mapping[str, Any]] = []
+    if not args.skip_detector_analysis:
+        (
+            detector_rows,
+            precision_recall_rows,
+            risk_coverage_rows,
+        ) = evaluate_detector_matrix(rows)
+        detector_aggregates = aggregate_detector_results(detector_rows)
+
+    provenance = reporting_provenance(repo_root)
     _write_csv(output_directory / "run_results.csv", rows)
     _write_csv(output_directory / "aggregate_results.csv", aggregates)
     _write_csv(output_directory / "model_results.csv", model_rows)
     _write_csv(output_directory / "model_aggregate_results.csv", model_aggregates)
-    warning = _plot_aggregates(output_directory, aggregates, rows)
+    _write_csv(output_directory / "paired_control_results.csv", paired_rows)
+    _write_csv(
+        output_directory / "paired_control_aggregate_results.csv",
+        paired_aggregates,
+    )
+    if detector_rows:
+        _write_csv(output_directory / "detector_results.csv", detector_rows)
+        _write_csv(
+            output_directory / "detector_aggregate_results.csv",
+            detector_aggregates,
+        )
+        _write_csv(
+            output_directory / "detector_precision_recall_curves.csv",
+            precision_recall_rows,
+        )
+        _write_csv(
+            output_directory / "detector_risk_coverage_curves.csv",
+            risk_coverage_rows,
+        )
+    (output_directory / "reporting_provenance.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    plot_warnings = [
+        _plot_aggregates(output_directory, aggregates, rows),
+        _plot_paired_effects(output_directory, paired_rows, paired_aggregates),
+        _plot_ood_metrics(output_directory, model_rows),
+    ]
+    if detector_rows:
+        plot_warnings.extend(
+            [
+                _plot_detector_comparison(output_directory, detector_rows),
+                _plot_detector_curves(
+                    output_directory,
+                    precision_recall_rows,
+                    risk_coverage_rows,
+                    primary_intervention=evaluation["primary_intervention"],
+                ),
+            ]
+        )
+    warnings = [warning for warning in plot_warnings if warning is not None]
     payload = {
         "protocol_id": protocol.protocol_id,
         "protocol_sha256": protocol.sha256,
+        "reporting_provenance": provenance,
         "runs": rows,
         "aggregates": aggregates,
         "unique_models": model_rows,
         "model_aggregates": model_aggregates,
-        "warning": warning,
+        "paired_control_results": paired_rows,
+        "paired_control_aggregates": paired_aggregates,
+        "detector_analysis": {
+            "performed": not args.skip_detector_analysis,
+            "detector_definitions": DETECTOR_DESCRIPTIONS,
+            "target_definitions": TARGET_DEFINITIONS,
+            "results": detector_rows,
+            "aggregates": detector_aggregates,
+            "curve_files": (
+                {
+                    "precision_recall": "detector_precision_recall_curves.csv",
+                    "risk_coverage": "detector_risk_coverage_curves.csv",
+                }
+                if detector_rows
+                else None
+            ),
+        },
+        "warnings": warnings,
+        "warning": "; ".join(warnings) if warnings else None,
     }
     (output_directory / "aggregate_results.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True),

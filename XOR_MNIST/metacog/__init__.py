@@ -41,6 +41,14 @@ from .experiment import (
     shortcut_proxy_labels,
 )
 from .report import MetaCognitiveReport, build_meta_cognitive_report
+from .posthoc import (
+    PosthocRunAnalysis,
+    detector_scores_and_targets,
+    evaluate_detector_arrays,
+    evaluate_result_directory,
+    precision_recall_curve,
+    risk_coverage_curve,
+)
 from .thresholds import ThresholdSelection, select_review_threshold
 
 __all__ = [
@@ -50,6 +58,7 @@ __all__ = [
     "MetaBEARSExperimentResult",
     "MetaCognitiveReport",
     "PredictionIntervention",
+    "PosthocRunAnalysis",
     "ThresholdSelection",
     "HALFMNIST_HALF_SWAP",
     "HALFMNIST_PATCH_CONFLICT",
@@ -67,11 +76,16 @@ __all__ = [
     "contradict_halfmnist_label_patch",
     "ensemble_leave_one_out_reference_distances",
     "ensemble_nearest_reference_distances",
+    "detector_scores_and_targets",
+    "evaluate_detector_arrays",
+    "evaluate_result_directory",
     "familiarity_from_reference",
     "get_intervention",
     "neutralize_halfmnist_label_patch",
     "remove_halfmnist_label_patch",
     "probe_concept_consistency",
+    "precision_recall_curve",
+    "risk_coverage_curve",
     "run_metabears_experiment",
     "select_review_threshold",
     "shortcut_proxy_labels",

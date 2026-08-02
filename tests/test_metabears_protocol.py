@@ -7,8 +7,11 @@ from pathlib import Path
 from aggregate_metabears_results import (
     METRIC_FIELDS,
     aggregate_rows,
+    aggregate_detector_results,
     aggregate_unique_models,
     extract_run_row,
+    paired_control_analysis,
+    reporting_provenance,
 )
 from metabears_matrix import build_experiment_command, expected_member_seeds
 from XOR_MNIST.metacog.protocol import (
@@ -231,6 +234,72 @@ class AggregationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "inconsistent ood_auroc"):
             aggregate_unique_models(rows)
+
+    def test_paired_controls_report_within_seed_differences(self) -> None:
+        rows = []
+        for seed, shuffled, removed in ((0, 0.14, 0.04), (10, 0.05, 0.03)):
+            for intervention, accuracy_drop in (
+                ("patch_shuffled", shuffled),
+                ("patch_removed", removed),
+            ):
+                rows.append(
+                    {
+                        "seed": seed,
+                        "intervention": intervention,
+                        "checkpoint_fingerprint": f"ensemble-{seed}",
+                        **{metric: 0.5 for metric in METRIC_FIELDS},
+                        "id_accuracy_drop": accuracy_drop,
+                    }
+                )
+
+        paired, aggregates = paired_control_analysis(
+            rows,
+            primary_intervention="patch_shuffled",
+            comparator_interventions=["patch_removed"],
+        )
+
+        differences = [
+            row["paired_difference"]
+            for row in paired
+            if row["metric"] == "id_accuracy_drop"
+        ]
+        self.assertEqual(differences, [0.1, 0.020000000000000004])
+        accuracy = next(
+            row for row in aggregates if row["metric"] == "id_accuracy_drop"
+        )
+        self.assertEqual(accuracy["n"], 2)
+        self.assertAlmostEqual(accuracy["mean"], 0.06)
+
+    def test_detector_aggregation_preserves_target_and_detector(self) -> None:
+        rows = [
+            {
+                "seed": seed,
+                "intervention": "patch_shuffled",
+                "target": "task_invariance_failure",
+                "detector": "full_metabears",
+                "auroc": auroc,
+                "average_precision": 0.4,
+                "aurc": 0.1,
+                "risk_at_80_coverage": 0.02,
+                "review_rate_at_95_recall": 0.6,
+            }
+            for seed, auroc in ((0, 0.8), (10, 1.0))
+        ]
+
+        aggregates = aggregate_detector_results(rows)
+
+        auroc = next(row for row in aggregates if row["metric"] == "auroc")
+        self.assertEqual(auroc["target"], "task_invariance_failure")
+        self.assertEqual(auroc["detector"], "full_metabears")
+        self.assertAlmostEqual(auroc["mean"], 0.9)
+
+    def test_reporting_provenance_hashes_analysis_sources(self) -> None:
+        provenance = reporting_provenance(REPO_ROOT)
+
+        self.assertEqual(len(provenance["source_files"]), 2)
+        self.assertTrue(
+            all(len(record["sha256"]) == 64 for record in provenance["source_files"])
+        )
 
 
 if __name__ == "__main__":
