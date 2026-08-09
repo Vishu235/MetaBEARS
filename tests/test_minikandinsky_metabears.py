@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import torch
 
-from XOR_MNIST.metacog import collect_ensemble_predictions
+from XOR_MNIST.metacog import EnsemblePredictions, collect_ensemble_predictions
 from XOR_MNIST.metacog.minikandinsky import (
     MiniKandinskyModelAdapter,
     MiniKandinskyTargetLoader,
@@ -19,6 +19,11 @@ from XOR_MNIST.metacog.minikandinsky import (
     permute_minikandinsky_figures,
 )
 from XOR_MNIST.metacog.minikandinsky_runner import _collect_provenance
+from XOR_MNIST.metacog.minikandinsky_representation_sweep import (
+    _accepted,
+    _candidate_metrics,
+    _validation_metrics,
+)
 from XOR_MNIST.utils.losses import KAND_Classification
 
 
@@ -28,6 +33,25 @@ def _categorical_probabilities(batch_size: int) -> np.ndarray:
         for concept in range(18):
             probabilities[sample, concept, (sample + concept) % 3] = 0.95
     return probabilities
+
+
+def _sweep_predictions(representations: np.ndarray) -> EnsemblePredictions:
+    values = np.asarray(representations, dtype=np.float64)
+    members, samples, _ = values.shape
+    concept_probabilities = np.tile(
+        np.array([0.9, 0.1]), (members, samples, 1, 1)
+    )
+    label_probabilities = np.tile(
+        np.array([0.9, 0.1]), (members, samples, 1)
+    )
+    return EnsemblePredictions(
+        concept_member_probabilities=concept_probabilities,
+        label_member_probabilities=label_probabilities,
+        member_representations=values,
+        labels=np.zeros(samples, dtype=np.int64),
+        concepts=np.zeros((samples, 1), dtype=np.int64),
+        batch_sizes=(samples,),
+    )
 
 
 class FakeRawMiniKandinskyModel:
@@ -51,6 +75,40 @@ class FakeRawMiniKandinskyModel:
 
 
 class MiniKandinskyAdapterTests(unittest.TestCase):
+    def test_validation_only_sweep_separates_distant_ood_representations(self) -> None:
+        id_values = np.array(
+            [[[0.0], [1.0], [3.0], [6.0]], [[0.2], [1.2], [3.2], [6.2]]]
+        )
+        ood_values = np.array(
+            [[[20.0], [22.0], [24.0], [26.0]], [[20.2], [22.2], [24.2], [26.2]]]
+        )
+        id_predictions = _sweep_predictions(id_values)
+        ood_predictions = _sweep_predictions(ood_values)
+
+        candidate = _candidate_metrics(
+            id_predictions,
+            ood_predictions,
+            representation_key="CS",
+            normalization="none",
+            max_false_review_rate=0.30,
+        )
+
+        self.assertEqual(candidate["auroc"], 0.875)
+        self.assertEqual(candidate["average_precision"], 0.8)
+        self.assertEqual(candidate["threshold_selection"]["recall"], 1.0)
+        self.assertTrue(
+            _accepted(
+                candidate,
+                Namespace(
+                    minimum_auroc=0.8,
+                    minimum_average_precision=0.8,
+                    minimum_recall=0.9,
+                    max_false_review_rate=0.30,
+                ),
+            )
+        )
+        self.assertEqual(_validation_metrics(id_predictions)["task_accuracy"], 1.0)
+
     def test_minikandinsky_task_loss_is_differentiable_without_concept_loss(self) -> None:
         task_probabilities = torch.tensor(
             [[0.8, 0.2], [0.3, 0.7]],

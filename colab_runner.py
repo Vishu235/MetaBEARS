@@ -298,8 +298,12 @@ def _run_minikand(args, *, epochs, save_checkpoint):
         str(args.minikand_c_sup),
         "--w_c",
         str(args.minikand_w_c),
+        "--w_h",
+        str(args.minikand_w_h),
         "--non_verbose",
     ]
+    if args.minikand_entropy:
+        command.append("--entropy")
     if save_checkpoint:
         command.append("--checkout")
     _run(command, args.repo_root / "XOR_MNIST")
@@ -402,6 +406,59 @@ def metabears_minikandinsky(args):
             str(args.minikand_familiarity_max_false_review_rate),
         ]
     )
+    if args.metabears_max_batches is not None:
+        command.extend(["--max-batches", str(args.metabears_max_batches)])
+    _run(command, args.repo_root / "XOR_MNIST")
+
+
+def minikand_representation_sweep(args):
+    ensure_kandinsky_data(args.repo_root)
+    if not args.minikand_checkpoints or len(args.minikand_checkpoints) < 2:
+        raise SystemExit(
+            "Pass at least two trained members with --minikand-checkpoints."
+        )
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = args.minikand_output_dir
+    if output_dir is None:
+        output_dir = (
+            args.repo_root
+            / "colab_outputs"
+            / "minikandinsky_representation_sweep"
+            / timestamp
+        )
+    command = [
+        sys.executable,
+        "-m",
+        "metacog.minikandinsky_representation_sweep",
+        "--output-dir",
+        str(output_dir),
+        "--seed",
+        str(args.seed),
+        "--batch-size",
+        str(args.batch_size),
+        "--c-sup",
+        str(args.minikand_c_sup),
+        "--w-c",
+        str(args.minikand_w_c),
+        "--max-false-review-rate",
+        str(args.minikand_familiarity_max_false_review_rate),
+        "--minimum-auroc",
+        str(args.minikand_sweep_minimum_auroc),
+        "--minimum-average-precision",
+        str(args.minikand_sweep_minimum_average_precision),
+        "--minimum-recall",
+        str(args.minikand_sweep_minimum_recall),
+        "--ensemble-checkpoints",
+        *args.minikand_checkpoints,
+    ]
+    if args.minikand_entropy:
+        command.extend(
+            [
+                "--training-entropy",
+                "--training-entropy-weight",
+                str(args.minikand_w_h),
+            ]
+        )
     if args.metabears_max_batches is not None:
         command.extend(["--max-batches", str(args.metabears_max_batches)])
     _run(command, args.repo_root / "XOR_MNIST")
@@ -536,6 +593,7 @@ def parse_args():
             "minikand_smoke",
             "minikand_train",
             "metabears_minikandinsky",
+            "minikand_representation_sweep",
             "bdd_preprocess_smoke",
             "bdd_train_smoke",
             "bdd_preprocess_full",
@@ -600,8 +658,19 @@ def parse_args():
     parser.add_argument(
         "--minikand-checkpoint-tag",
         default=None,
-        choices=["v1-task-loss"],
+        choices=["v1-task-loss", "v2-entropy-task-loss"],
         help="Optional protocol tag used to preserve earlier checkpoints.",
+    )
+    parser.add_argument(
+        "--minikand-entropy",
+        action="store_true",
+        help="Enable the MiniKandinsky concept-balance entropy regularizer.",
+    )
+    parser.add_argument(
+        "--minikand-w-h",
+        type=float,
+        default=1.0,
+        help="MiniKandinsky entropy-loss weight.",
     )
     parser.add_argument(
         "--minikand-representation-key",
@@ -632,6 +701,21 @@ def parse_args():
         "--minikand-familiarity-max-false-review-rate",
         type=float,
         default=0.05,
+    )
+    parser.add_argument(
+        "--minikand-sweep-minimum-auroc",
+        type=float,
+        default=0.70,
+    )
+    parser.add_argument(
+        "--minikand-sweep-minimum-average-precision",
+        type=float,
+        default=0.70,
+    )
+    parser.add_argument(
+        "--minikand-sweep-minimum-recall",
+        type=float,
+        default=0.50,
     )
     parser.add_argument(
         "--metabears-intervention",
@@ -725,6 +809,7 @@ def main():
         "minikand_smoke": minikand_smoke,
         "minikand_train": minikand_train,
         "metabears_minikandinsky": metabears_minikandinsky,
+        "minikand_representation_sweep": minikand_representation_sweep,
         "bdd_preprocess_smoke": lambda parsed: bdd_preprocess(parsed, full=False),
         "bdd_train_smoke": lambda parsed: bdd_train(parsed, full=False),
         "bdd_preprocess_full": lambda parsed: bdd_preprocess(parsed, full=True),

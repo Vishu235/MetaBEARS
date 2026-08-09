@@ -16,7 +16,7 @@ The proposed novelty combines a **concept consistency probe** with a **meta-cogn
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
 - Phase II HalfMNIST: frozen — the v4 leave-one-intervention-out study and v5 half-swap negative control are complete across seeds 0, 10, and 20.
-- Phase II MiniKandinsky: v0 evaluated; v1 implementation ready — the three-seed supervised baseline is preserved, and the next protocol adds false-review budgets, normalized probability representations, a held-out OOD shift, and a concept-unsupervised control ensemble.
+- Phase II MiniKandinsky: v1 evaluated; exploratory v2 ready — v1 preserves the supervised result but exposes task-only collapse and reversed familiarity on the pastel shift. v2 adds entropy-regularized task-only training and validation-only representation selection before any new OOD test is defined.
 
 ## Repository layout
 
@@ -88,6 +88,13 @@ The Colab notebook trains a matched v1 pair under the corrected differentiable
 MiniKandinsky task loss: `c_sup=1`, `w_c=10` and `c_sup=0`, `w_c=0`. All six
 checkpoints use a `v1-task-loss` filename tag and separate Drive directories,
 so they cannot overwrite the original v0 supervised baseline.
+
+The next exploratory stage trains a separately tagged `c_sup=0` ensemble with
+concept-balance entropy regularization. It then compares `CS` and `pCS` under
+four validation-fitted normalizations using ID validation and desaturated OOD
+validation only. A candidate is accepted only if it meets predeclared AUROC,
+average-precision, recall, and false-review criteria. This sweep never iterates
+the test loader; a new held-out OOD transform is frozen only after selection.
 
 Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
 

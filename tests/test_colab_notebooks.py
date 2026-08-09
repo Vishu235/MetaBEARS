@@ -48,6 +48,9 @@ class MiniKandinskyNotebookTests(unittest.TestCase):
                         "Resolve matched v1 checkpoints",
                         "MetaBEARS v1 held-out-shift evaluation helper",
                         "Run the v1 supervision-control matrix",
+                        "Train entropy-regularized v2 task-only ensemble",
+                        "Validate v2 sweep checkpoints",
+                        "Run validation-only representation sweep",
                     ),
                     start=1,
                 )
