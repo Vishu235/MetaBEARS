@@ -562,6 +562,18 @@ class ThresholdSelectionTests(unittest.TestCase):
         self.assertGreaterEqual(selection.precision, 0.8)
         self.assertEqual(selection.policy, "constrained")
 
+    def test_false_review_budget_can_select_no_reviews(self) -> None:
+        scores = np.array([0.1, 0.2, 0.8])
+        labels = np.array([True, False, False])
+
+        selection = select_review_threshold(
+            scores, labels, max_false_review_rate=0.0
+        )
+
+        self.assertEqual(selection.flagged_count, 0)
+        self.assertEqual(selection.false_review_rate, 0.0)
+        self.assertGreater(selection.threshold, scores.max())
+
     def test_infeasible_constraint_raises(self) -> None:
         scores = np.array([0.1, 0.2, 0.3, 0.4])
         labels = np.array([True, False, True, False])

@@ -14,6 +14,7 @@ from .minikandinsky import (
     MiniKandinskyTargetLoader,
     desaturate_minikandinsky_palette,
     get_minikandinsky_intervention,
+    pastelize_minikandinsky_palette,
 )
 from .protocol import collect_run_provenance
 
@@ -70,8 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="figure_permute",
     )
     parser.add_argument(
+        "--ood-validation-transform",
+        choices=["none", "palette_desaturate", "palette_pastel"],
+        default="none",
+        help=(
+            "Controlled validation-only shift used to calibrate familiarity. "
+            "Keep this different from the reported OOD test transform."
+        ),
+    )
+    parser.add_argument(
         "--ood-transform",
-        choices=["none", "palette_desaturate"],
+        choices=["none", "palette_desaturate", "palette_pastel"],
         default="palette_desaturate",
         help="Controlled test-only distribution shift used for OOD evaluation.",
     )
@@ -89,6 +99,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model output flattened as the learned representation.",
     )
     parser.add_argument(
+        "--representation-normalization",
+        choices=["none", "zscore", "l2", "zscore_l2"],
+        default="none",
+        help="Validation-fitted normalization applied before distance scoring.",
+    )
+    parser.add_argument(
         "--familiarity-validation-quantile",
         type=float,
         default=0.05,
@@ -97,6 +113,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--shortcut-fallback-quantile",
         type=float,
         default=0.95,
+    )
+    parser.add_argument(
+        "--shortcut-max-false-review-rate",
+        type=float,
+        default=None,
+        help="Optional maximum ID false-review rate for shortcut calibration.",
+    )
+    parser.add_argument(
+        "--familiarity-max-false-review-rate",
+        type=float,
+        default=0.05,
+        help="Maximum ID false-review rate with controlled OOD validation.",
     )
     parser.add_argument("--ece-bins", type=int, default=15)
     parser.add_argument(
@@ -218,14 +246,14 @@ def _configuration(
         "training_concept_supervision": args.c_sup,
         "training_concept_weight": args.w_c,
         "representation_key": args.representation_key,
+        "representation_normalization": args.representation_normalization,
         "intervention": args.intervention,
+        "ood_validation_transform": args.ood_validation_transform,
         "ood_transform": args.ood_transform,
-        "ood_definition": (
-            "The ID test images are deterministically recolored from the known "
-            "red/yellow/blue palette to three distinct grayscale levels."
-            if args.ood_transform == "palette_desaturate"
-            else None
+        "ood_validation_definition": _ood_definition(
+            args.ood_validation_transform
         ),
+        "ood_definition": _ood_definition(args.ood_transform),
         "max_batches": args.max_batches,
         "batch_size": args.batch_size,
         "ece_bins": args.ece_bins,
@@ -233,8 +261,38 @@ def _configuration(
             args.familiarity_validation_quantile
         ),
         "shortcut_fallback_quantile": args.shortcut_fallback_quantile,
+        "shortcut_max_false_review_rate": (
+            args.shortcut_max_false_review_rate
+        ),
+        "familiarity_max_false_review_rate": (
+            args.familiarity_max_false_review_rate
+        ),
         "command_arguments": list(command_arguments),
     }
+
+
+def _ood_definition(name: str) -> Optional[str]:
+    definitions = {
+        "none": None,
+        "palette_desaturate": (
+            "Images are deterministically recolored from the known "
+            "red/yellow/blue palette to three distinct grayscale levels."
+        ),
+        "palette_pastel": (
+            "Images are deterministically recolored from the known "
+            "red/yellow/blue palette to lighter pastel hues."
+        ),
+    }
+    return definitions[name]
+
+
+def _image_transform(name: str) -> Optional[Any]:
+    transforms = {
+        "none": None,
+        "palette_desaturate": desaturate_minikandinsky_palette,
+        "palette_pastel": pastelize_minikandinsky_palette,
+    }
+    return transforms[name]
 
 
 def _collect_provenance(
@@ -269,6 +327,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error("--ece-bins must be at least 2.")
     if args.max_batches is not None and args.max_batches < 1:
         parser.error("--max-batches must be positive.")
+    for option_name in (
+        "shortcut_max_false_review_rate",
+        "familiarity_max_false_review_rate",
+    ):
+        value = getattr(args, option_name)
+        if value is not None and not 0.0 <= value <= 1.0:
+            option = option_name.replace("_", "-")
+            parser.error(f"--{option} must lie within [0, 1].")
+    if (
+        args.ood_validation_transform != "none"
+        and args.ood_validation_transform == args.ood_transform
+    ):
+        parser.error(
+            "OOD validation and test transforms must differ to preserve a "
+            "held-out shift evaluation."
+        )
     try:
         checkpoint_paths = discover_checkpoint_paths(args)
     except (FileNotFoundError, ValueError) as error:
@@ -289,10 +363,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _, raw_validation_loader, raw_test_loader = dataset.get_data_loaders()
     validation_loader = MiniKandinskyTargetLoader(raw_validation_loader)
     id_test_loader = MiniKandinskyTargetLoader(raw_test_loader)
-    if args.ood_transform == "palette_desaturate":
+    ood_validation_transform = _image_transform(args.ood_validation_transform)
+    ood_validation_loader = (
+        ImageTransformLoader(validation_loader, ood_validation_transform)
+        if ood_validation_transform is not None
+        else None
+    )
+    ood_test_transform = _image_transform(args.ood_transform)
+    if ood_test_transform is not None:
         ood_test_loader = ImageTransformLoader(
             id_test_loader,
-            desaturate_minikandinsky_palette,
+            ood_test_transform,
         )
     else:
         ood_test_loader = None
@@ -318,11 +399,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ensemble,
         validation_loader,
         id_test_loader,
+        ood_validation_loader=ood_validation_loader,
         ood_test_loader=ood_test_loader,
         output_directory=output_directory,
         familiarity_validation_quantile=args.familiarity_validation_quantile,
         shortcut_fallback_quantile=args.shortcut_fallback_quantile,
+        shortcut_max_false_review_rate=args.shortcut_max_false_review_rate,
+        familiarity_max_false_review_rate=(
+            args.familiarity_max_false_review_rate
+        ),
         representation_key=args.representation_key,
+        representation_normalization=args.representation_normalization,
         max_batches=args.max_batches,
         ece_bins=args.ece_bins,
         intervention=intervention,

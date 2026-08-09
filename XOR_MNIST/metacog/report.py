@@ -19,6 +19,14 @@ from .familiarity import familiarity_from_reference
 PathLike = Union[str, Path]
 
 
+def _valid_unit_score_threshold(value: float) -> bool:
+    """Allow one-ULP sentinels that represent an empty review set."""
+
+    lower = np.nextafter(0.0, -np.inf)
+    upper = np.nextafter(1.0, np.inf)
+    return bool(np.isfinite(value) and lower <= value <= upper)
+
+
 @dataclass(frozen=True)
 class MetaCognitiveReport:
     """Separated confidence signals for every evaluated sample.
@@ -72,9 +80,9 @@ class MetaCognitiveReport:
         ):
             if flag_field.dtype != np.bool_:
                 raise ValueError(f"{name} must be a boolean array.")
-        if not 0.0 <= self.review_threshold <= 1.0:
+        if not _valid_unit_score_threshold(self.review_threshold):
             raise ValueError("review_threshold must lie within [0, 1].")
-        if not 0.0 <= self.familiarity_threshold <= 1.0:
+        if not _valid_unit_score_threshold(self.familiarity_threshold):
             raise ValueError("familiarity_threshold must lie within [0, 1].")
         if not np.array_equal(self.review_flag, self.shortcut_flag | self.ood_flag):
             raise ValueError("review_flag must equal shortcut_flag | ood_flag.")
@@ -211,9 +219,9 @@ def build_meta_cognitive_report(
         raise ValueError(
             "Label and concept predictions must share member and sample axes."
         )
-    if not 0.0 <= review_threshold <= 1.0:
+    if not _valid_unit_score_threshold(review_threshold):
         raise ValueError("review_threshold must lie within [0, 1].")
-    if not 0.0 <= familiarity_threshold <= 1.0:
+    if not _valid_unit_score_threshold(familiarity_threshold):
         raise ValueError("familiarity_threshold must lie within [0, 1].")
 
     consistency = probe_concept_consistency(

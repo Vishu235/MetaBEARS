@@ -25,6 +25,11 @@ _DESATURATED_PALETTE = (
     (0.70, 0.70, 0.70),
     (0.15, 0.15, 0.15),
 )
+_PASTEL_PALETTE = (
+    (1.0, 0.45, 0.45),
+    (1.0, 1.0, 0.45),
+    (0.45, 0.45, 1.0),
+)
 
 
 class MiniKandinskyModelAdapter:
@@ -263,6 +268,14 @@ def desaturate_minikandinsky_palette(
     """Map the three known colors to distinct grayscale levels for OOD tests."""
 
     return _palette_transform(images, _DESATURATED_PALETTE)
+
+
+def pastelize_minikandinsky_palette(
+    images: Any, labels: Any = None, concepts: Any = None
+) -> Any:
+    """Map the known colors to lighter hues for a held-out OOD test."""
+
+    return _palette_transform(images, _PASTEL_PALETTE)
 
 
 def align_cycled_minikandinsky_colors(

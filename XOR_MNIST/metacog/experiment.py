@@ -1,6 +1,6 @@
 """Validation-calibrated, end-to-end MetaBEARS experiment orchestration."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import islice
 import json
 from pathlib import Path
@@ -50,6 +50,60 @@ def _target_vectors(predictions: EnsemblePredictions) -> tuple:
         raise ValueError("Concept targets must contain a concept axis.")
     concepts = concepts.reshape(concepts.shape[0], -1)
     return labels.astype(np.int64), concepts.astype(np.int64)
+
+
+@dataclass(frozen=True)
+class _RepresentationNormalizer:
+    method: str
+    mean: Optional[np.ndarray] = None
+    scale: Optional[np.ndarray] = None
+
+    def transform(self, representations: np.ndarray) -> np.ndarray:
+        values = np.asarray(representations, dtype=np.float64)
+        if self.method in {"zscore", "zscore_l2"}:
+            if self.mean is None or self.scale is None:
+                raise ValueError("Z-score normalization requires fitted statistics.")
+            values = (values - self.mean) / self.scale
+        if self.method in {"l2", "zscore_l2"}:
+            norms = np.linalg.norm(values, axis=-1, keepdims=True)
+            values = values / np.where(norms > 1e-12, norms, 1.0)
+        return values
+
+
+def _fit_representation_normalizer(
+    validation_predictions: EnsemblePredictions,
+    method: str,
+) -> _RepresentationNormalizer:
+    supported = {"none", "zscore", "l2", "zscore_l2"}
+    if method not in supported:
+        raise ValueError(
+            "representation_normalization must be one of "
+            + ", ".join(sorted(supported))
+            + "."
+        )
+    _require_experiment_fields(validation_predictions)
+    representations = np.asarray(
+        validation_predictions.member_representations, dtype=np.float64
+    )
+    if method in {"zscore", "zscore_l2"}:
+        mean = representations.mean(axis=1, keepdims=True)
+        scale = representations.std(axis=1, keepdims=True)
+        scale = np.where(scale > 1e-8, scale, 1.0)
+        return _RepresentationNormalizer(method=method, mean=mean, scale=scale)
+    return _RepresentationNormalizer(method=method)
+
+
+def _normalize_prediction_representations(
+    predictions: EnsemblePredictions,
+    normalizer: _RepresentationNormalizer,
+) -> EnsemblePredictions:
+    _require_experiment_fields(predictions)
+    return replace(
+        predictions,
+        member_representations=normalizer.transform(
+            predictions.member_representations
+        ),
+    )
 
 
 def shortcut_proxy_labels(predictions: EnsemblePredictions) -> np.ndarray:
@@ -234,6 +288,8 @@ class MetaBEARSCalibration:
     shortcut_metrics: Mapping[str, Any]
     familiarity_validation_review_rate: float
     familiarity_target_review_rate: float
+    familiarity_policy: str = "id_validation_quantile"
+    familiarity_metrics: Optional[Mapping[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -252,6 +308,12 @@ class MetaBEARSCalibration:
             "familiarity_validation_review_rate": float(
                 self.familiarity_validation_review_rate
             ),
+            "familiarity_policy": self.familiarity_policy,
+            "familiarity_metrics": (
+                dict(self.familiarity_metrics)
+                if self.familiarity_metrics is not None
+                else None
+            ),
         }
 
 
@@ -261,18 +323,22 @@ def calibrate_metabears(
     familiarity_validation_quantile: float = 0.05,
     shortcut_fallback_quantile: float = 0.95,
     perturbed_member_probabilities: Optional[np.ndarray] = None,
+    ood_validation_predictions: Optional[EnsemblePredictions] = None,
+    shortcut_max_false_review_rate: Optional[float] = None,
+    familiarity_max_false_review_rate: float = 0.05,
 ) -> MetaBEARSCalibration:
-    """Calibrate both review paths using only an ID validation split.
+    """Calibrate both review paths without using any reported test split.
 
     Shortcut risk uses the observable task-correct/concept-wrong mismatch as a
     validation proxy. If the validation split does not contain both proxy
     positives and negatives, a clearly reported upper-quantile fallback is
     used instead of pretending that supervised threshold selection succeeded.
 
-    Familiarity has no labelled OOD calibration samples. Its threshold is
-    therefore the requested lower quantile of leave-one-out ID validation
-    familiarity. The observed validation review rate is retained because ties
-    can make it differ slightly from the requested quantile.
+    When a controlled OOD validation split is supplied, familiarity uses a
+    constrained threshold selected jointly from ID and OOD validation scores.
+    Otherwise, it uses the requested lower quantile of leave-one-out ID
+    validation familiarity. The observed ID validation review rate is retained
+    because ties can make it differ slightly from the requested rate.
     """
 
     familiarity_quantile = _unit_interval(
@@ -282,6 +348,18 @@ def calibrate_metabears(
     shortcut_quantile = _unit_interval(
         shortcut_fallback_quantile,
         name="shortcut_fallback_quantile",
+    )
+    shortcut_false_review_budget = (
+        _unit_interval(
+            shortcut_max_false_review_rate,
+            name="shortcut_max_false_review_rate",
+        )
+        if shortcut_max_false_review_rate is not None
+        else None
+    )
+    familiarity_false_review_budget = _unit_interval(
+        familiarity_max_false_review_rate,
+        name="familiarity_max_false_review_rate",
     )
     _require_experiment_fields(validation_predictions)
 
@@ -301,13 +379,23 @@ def calibrate_metabears(
         selection = select_review_threshold(
             provisional_report.shortcut_risk,
             proxy,
+            max_false_review_rate=shortcut_false_review_budget,
         )
         shortcut_threshold = selection.threshold
-        shortcut_policy = "validation_proxy_max_f1"
+        shortcut_policy = (
+            "validation_proxy_constrained"
+            if shortcut_false_review_budget is not None
+            else "validation_proxy_max_f1"
+        )
         shortcut_metrics: Mapping[str, Any] = selection.to_dict()
     else:
+        effective_quantile = (
+            1.0 - shortcut_false_review_budget
+            if shortcut_false_review_budget is not None
+            else shortcut_quantile
+        )
         shortcut_threshold = float(
-            np.quantile(provisional_report.shortcut_risk, shortcut_quantile)
+            np.quantile(provisional_report.shortcut_risk, effective_quantile)
         )
         shortcut_policy = "validation_quantile_no_mixed_proxy_labels"
         shortcut_flags = provisional_report.shortcut_risk >= shortcut_threshold
@@ -317,9 +405,40 @@ def calibrate_metabears(
         reference_distances,
         reference_distances,
     )
-    familiarity_threshold = float(
-        np.quantile(validation_familiarity, familiarity_quantile)
-    )
+    familiarity_policy = "id_validation_quantile"
+    familiarity_metrics: Optional[Mapping[str, Any]] = None
+    if ood_validation_predictions is not None:
+        _require_experiment_fields(ood_validation_predictions)
+        ood_distances = ensemble_nearest_reference_distances(
+            ood_validation_predictions.member_representations,
+            validation_predictions.member_representations,
+        )
+        ood_familiarity = familiarity_from_reference(
+            ood_distances,
+            reference_distances,
+        )
+        calibration_familiarity = np.concatenate(
+            [validation_familiarity, ood_familiarity]
+        )
+        calibration_labels = np.concatenate(
+            [
+                np.zeros(validation_familiarity.shape[0], dtype=bool),
+                np.ones(ood_familiarity.shape[0], dtype=bool),
+            ]
+        )
+        familiarity_selection = select_review_threshold(
+            calibration_familiarity,
+            calibration_labels,
+            higher_is_riskier=False,
+            max_false_review_rate=familiarity_false_review_budget,
+        )
+        familiarity_threshold = familiarity_selection.threshold
+        familiarity_policy = "controlled_ood_validation_constrained"
+        familiarity_metrics = familiarity_selection.to_dict()
+    else:
+        familiarity_threshold = float(
+            np.quantile(validation_familiarity, familiarity_quantile)
+        )
     validation_report = build_meta_cognitive_report(
         validation_predictions.concept_member_probabilities,
         validation_predictions.label_member_probabilities,
@@ -339,7 +458,13 @@ def calibrate_metabears(
         validation_report=validation_report,
         shortcut_metrics=shortcut_metrics,
         familiarity_validation_review_rate=float(validation_report.ood_flag.mean()),
-        familiarity_target_review_rate=familiarity_quantile,
+        familiarity_target_review_rate=(
+            familiarity_false_review_budget
+            if ood_validation_predictions is not None
+            else familiarity_quantile
+        ),
+        familiarity_policy=familiarity_policy,
+        familiarity_metrics=familiarity_metrics,
     )
 
 
@@ -732,11 +857,15 @@ def run_metabears_experiment(
     validation_loader: Iterable[Any],
     id_test_loader: Iterable[Any],
     *,
+    ood_validation_loader: Optional[Iterable[Any]] = None,
     ood_test_loader: Optional[Iterable[Any]] = None,
     output_directory: PathLike,
     familiarity_validation_quantile: float = 0.05,
     shortcut_fallback_quantile: float = 0.95,
+    shortcut_max_false_review_rate: Optional[float] = None,
+    familiarity_max_false_review_rate: float = 0.05,
     representation_key: str = "CS",
+    representation_normalization: str = "none",
     apply_label_softmax: bool = False,
     max_batches: Optional[int] = None,
     ece_bins: int = 15,
@@ -757,6 +886,14 @@ def run_metabears_experiment(
         apply_label_softmax=apply_label_softmax,
         representation_key=representation_key,
     )
+    representation_normalizer = _fit_representation_normalizer(
+        validation_predictions,
+        representation_normalization,
+    )
+    validation_predictions = _normalize_prediction_representations(
+        validation_predictions,
+        representation_normalizer,
+    )
     validation_intervention_predictions = None
     validation_perturbations = None
     if intervention is not None:
@@ -768,20 +905,44 @@ def run_metabears_experiment(
             representation_key=representation_key,
             max_batches=max_batches,
         )
+        validation_intervention_predictions = _normalize_prediction_representations(
+            validation_intervention_predictions,
+            representation_normalizer,
+        )
         validation_perturbations = _as_perturbation_axis(
             validation_intervention_predictions
+        )
+
+    ood_validation_predictions = None
+    if ood_validation_loader is not None:
+        ood_validation_predictions = collect_ensemble_predictions(
+            models,
+            _bounded_loader(ood_validation_loader, max_batches),
+            apply_label_softmax=apply_label_softmax,
+            representation_key=representation_key,
+        )
+        ood_validation_predictions = _normalize_prediction_representations(
+            ood_validation_predictions,
+            representation_normalizer,
         )
     calibration = calibrate_metabears(
         validation_predictions,
         familiarity_validation_quantile=familiarity_validation_quantile,
         shortcut_fallback_quantile=shortcut_fallback_quantile,
         perturbed_member_probabilities=validation_perturbations,
+        ood_validation_predictions=ood_validation_predictions,
+        shortcut_max_false_review_rate=shortcut_max_false_review_rate,
+        familiarity_max_false_review_rate=familiarity_max_false_review_rate,
     )
     id_predictions = collect_ensemble_predictions(
         models,
         _bounded_loader(id_test_loader, max_batches),
         apply_label_softmax=apply_label_softmax,
         representation_key=representation_key,
+    )
+    id_predictions = _normalize_prediction_representations(
+        id_predictions,
+        representation_normalizer,
     )
     id_intervention_predictions = None
     id_perturbations = None
@@ -793,6 +954,10 @@ def run_metabears_experiment(
             apply_label_softmax=apply_label_softmax,
             representation_key=representation_key,
             max_batches=max_batches,
+        )
+        id_intervention_predictions = _normalize_prediction_representations(
+            id_intervention_predictions,
+            representation_normalizer,
         )
         id_perturbations = _as_perturbation_axis(id_intervention_predictions)
     id_report = build_calibrated_report(
@@ -812,6 +977,10 @@ def run_metabears_experiment(
             apply_label_softmax=apply_label_softmax,
             representation_key=representation_key,
         )
+        ood_predictions = _normalize_prediction_representations(
+            ood_predictions,
+            representation_normalizer,
+        )
         ood_perturbations = None
         if intervention is not None:
             ood_intervention_predictions = _collect_intervention_predictions(
@@ -821,6 +990,10 @@ def run_metabears_experiment(
                 apply_label_softmax=apply_label_softmax,
                 representation_key=representation_key,
                 max_batches=max_batches,
+            )
+            ood_intervention_predictions = _normalize_prediction_representations(
+                ood_intervention_predictions,
+                representation_normalizer,
             )
             ood_perturbations = _as_perturbation_axis(
                 ood_intervention_predictions
@@ -839,6 +1012,17 @@ def run_metabears_experiment(
         shortcut_proxy=calibration.shortcut_proxy,
         reference_distances=calibration.reference_distances,
     )
+    normalizer_artifact: Dict[str, Any] = {
+        "method": np.asarray(representation_normalizer.method),
+    }
+    if representation_normalizer.mean is not None:
+        normalizer_artifact["mean"] = representation_normalizer.mean
+    if representation_normalizer.scale is not None:
+        normalizer_artifact["scale"] = representation_normalizer.scale
+    np.savez_compressed(
+        destination / "representation_normalization.npz",
+        **normalizer_artifact,
+    )
     id_report.write_json(destination / "id_test_report.json")
     id_report.write_csv(destination / "id_test_report.csv")
     _write_predictions(
@@ -846,6 +1030,11 @@ def run_metabears_experiment(
         validation_predictions,
     )
     _write_predictions(destination / "id_test_predictions.npz", id_predictions)
+    if ood_validation_predictions is not None:
+        _write_predictions(
+            destination / "ood_validation_predictions.npz",
+            ood_validation_predictions,
+        )
     if validation_intervention_predictions is not None:
         _write_predictions(
             destination / "validation_intervention_predictions.npz",
@@ -958,8 +1147,23 @@ def run_metabears_experiment(
             }
         )
 
+    effective_configuration = dict(run_configuration or {})
+    effective_configuration.setdefault("representation_key", representation_key)
+    effective_configuration.setdefault(
+        "representation_normalization", representation_normalization
+    )
+    effective_configuration.setdefault(
+        "shortcut_max_false_review_rate", shortcut_max_false_review_rate
+    )
+    effective_configuration.setdefault(
+        "familiarity_max_false_review_rate", familiarity_max_false_review_rate
+    )
+    effective_configuration.setdefault(
+        "uses_ood_validation", ood_validation_predictions is not None
+    )
+
     summary: Dict[str, Any] = {
-        "configuration": _json_safe(dict(run_configuration or {})),
+        "configuration": _json_safe(effective_configuration),
         "provenance": _json_safe(dict(run_provenance or {})),
         "calibration": calibration.to_dict(),
         "splits": split_metrics,
@@ -972,7 +1176,11 @@ def run_metabears_experiment(
                 "it is not a causal shortcut label."
             ),
             (
-                "Familiarity calibration uses only the lower tail of ID "
+                "Familiarity calibration uses a controlled synthetic OOD "
+                "validation split. The separately configured held-out OOD "
+                "test remains necessary to assess shift generalization."
+                if ood_validation_predictions is not None
+                else "Familiarity calibration uses only the lower tail of ID "
                 "validation familiarity; no labelled OOD samples are used "
                 "to select its threshold."
             ),

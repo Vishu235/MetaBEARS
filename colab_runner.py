@@ -295,14 +295,36 @@ def _run_minikand(args, *, epochs, save_checkpoint):
         "--seed",
         str(args.seed),
         "--c_sup",
-        "1",
+        str(args.minikand_c_sup),
         "--w_c",
-        "10",
+        str(args.minikand_w_c),
         "--non_verbose",
     ]
     if save_checkpoint:
         command.append("--checkout")
     _run(command, args.repo_root / "XOR_MNIST")
+    if save_checkpoint and not (
+        args.minikand_c_sup == 1.0 and args.minikand_w_c == 10.0
+    ):
+        source = (
+            args.repo_root
+            / "XOR_MNIST"
+            / "data"
+            / "ckpts"
+            / f"minikandinsky-minikanddpl-dis-{args.seed}-end.pt"
+        )
+        supervision = format(args.minikand_c_sup, "g").replace(".", "p")
+        weight = format(args.minikand_w_c, "g").replace(".", "p")
+        destination = source.with_name(
+            "minikandinsky-minikanddpl-"
+            f"csup-{supervision}-wc-{weight}-seed-{args.seed}-end.pt"
+        )
+        if not source.is_file():
+            raise SystemExit(
+                f"Expected trained checkpoint was not created: {source}"
+            )
+        os.replace(source, destination)
+        print(f"Saved supervision-control checkpoint: {destination}")
 
 
 def minikand_smoke(args):
@@ -340,6 +362,16 @@ def metabears_minikandinsky(args):
         str(args.batch_size),
         "--intervention",
         args.minikand_intervention,
+        "--c-sup",
+        str(args.minikand_c_sup),
+        "--w-c",
+        str(args.minikand_w_c),
+        "--representation-key",
+        args.minikand_representation_key,
+        "--representation-normalization",
+        args.minikand_representation_normalization,
+        "--ood-validation-transform",
+        args.minikand_ood_validation_transform,
         "--ood-transform",
         args.minikand_ood_transform,
         "--familiarity-validation-quantile",
@@ -351,6 +383,19 @@ def metabears_minikandinsky(args):
         "--ensemble-checkpoints",
         *args.minikand_checkpoints,
     ]
+    if args.minikand_shortcut_max_false_review_rate is not None:
+        command.extend(
+            [
+                "--shortcut-max-false-review-rate",
+                str(args.minikand_shortcut_max_false_review_rate),
+            ]
+        )
+    command.extend(
+        [
+            "--familiarity-max-false-review-rate",
+            str(args.minikand_familiarity_max_false_review_rate),
+        ]
+    )
     if args.metabears_max_batches is not None:
         command.extend(["--max-batches", str(args.metabears_max_batches)])
     _run(command, args.repo_root / "XOR_MNIST")
@@ -535,9 +580,46 @@ def parse_args():
         default="figure_permute",
     )
     parser.add_argument(
+        "--minikand-c-sup",
+        type=float,
+        default=1.0,
+        help="MiniKandinsky concept-supervision fraction for training/loading.",
+    )
+    parser.add_argument(
+        "--minikand-w-c",
+        type=float,
+        default=10.0,
+        help="MiniKandinsky concept-loss weight for training/loading.",
+    )
+    parser.add_argument(
+        "--minikand-representation-key",
+        default="CS",
+        help="MiniKandinsky output used for familiarity distances.",
+    )
+    parser.add_argument(
+        "--minikand-representation-normalization",
+        choices=["none", "zscore", "l2", "zscore_l2"],
+        default="none",
+    )
+    parser.add_argument(
+        "--minikand-ood-validation-transform",
+        choices=["none", "palette_desaturate", "palette_pastel"],
+        default="none",
+    )
+    parser.add_argument(
         "--minikand-ood-transform",
-        choices=["none", "palette_desaturate"],
+        choices=["none", "palette_desaturate", "palette_pastel"],
         default="palette_desaturate",
+    )
+    parser.add_argument(
+        "--minikand-shortcut-max-false-review-rate",
+        type=float,
+        default=None,
+    )
+    parser.add_argument(
+        "--minikand-familiarity-max-false-review-rate",
+        type=float,
+        default=0.05,
     )
     parser.add_argument(
         "--metabears-intervention",

@@ -226,6 +226,44 @@ class ExperimentRunnerTests(unittest.TestCase):
             0.5,
         )
 
+    def test_v1_calibrates_with_separate_ood_validation_and_normalization(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            output = Path(temporary_directory)
+            result = run_metabears_experiment(
+                [FakeHalfMNISTMember(0), FakeHalfMNISTMember(1)],
+                loader([0, 1, 2, 3, 4, 5]),
+                loader([0, 2, 3]),
+                ood_validation_loader=loader([20, 21, 22, 23, 24, 25]),
+                ood_test_loader=loader([30, 31, 32]),
+                output_directory=output,
+                representation_normalization="zscore_l2",
+                shortcut_max_false_review_rate=0.5,
+                familiarity_max_false_review_rate=0.5,
+            )
+            with np.load(output / "validation_predictions.npz") as predictions:
+                representations = predictions["member_representations"]
+            with np.load(output / "representation_normalization.npz") as normalizer:
+                method = str(normalizer["method"])
+
+        self.assertEqual(
+            result.calibration.familiarity_policy,
+            "controlled_ood_validation_constrained",
+        )
+        self.assertEqual(
+            result.calibration.shortcut_policy,
+            "validation_proxy_constrained",
+        )
+        self.assertLessEqual(
+            result.calibration.familiarity_metrics["false_review_rate"],
+            0.5,
+        )
+        self.assertEqual(method, "zscore_l2")
+        np.testing.assert_allclose(
+            np.linalg.norm(representations, axis=-1),
+            np.ones(representations.shape[:2]),
+        )
+        self.assertTrue(result.summary["configuration"]["uses_ood_validation"])
+
     def test_experiment_can_run_without_an_ood_split(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             result = run_metabears_experiment(

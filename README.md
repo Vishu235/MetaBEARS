@@ -16,7 +16,7 @@ The proposed novelty combines a **concept consistency probe** with a **meta-cogn
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
 - Phase II HalfMNIST: frozen — the v4 leave-one-intervention-out study and v5 half-swap negative control are complete across seeds 0, 10, and 20.
-- Phase II extension: in progress — the three-seed MiniKandinsky baseline is trained and its MetaBEARS evaluation workflow is implemented; controlled results remain to be executed and frozen before proceeding to BDD-OIA.
+- Phase II MiniKandinsky: v0 evaluated; v1 implementation ready — the three-seed supervised baseline is preserved, and the next protocol adds false-review budgets, normalized probability representations, a held-out OOD shift, and a concept-unsupervised control ensemble.
 
 ## Repository layout
 
@@ -46,10 +46,12 @@ layouts, entry points, and persistence requirements:
 
 The MiniKandinsky adapter regroups the legacy model output into 18 categorical
 concepts and selects the final binary task target. Its controls include cyclic
-figure permutation, global palette cycling with color-class realignment, and a
-deterministic desaturated-palette OOD split. The BDD notebook remains a
-practical reconstruction based on ResNet50 ImageNet features; it is not the
-exact paper setup that used the unavailable Faster-RCNN/CBM-AUC feature archive.
+figure permutation and global palette cycling with color-class realignment.
+The v1 protocol uses desaturated validation images only for calibration and
+reserves a separate pastel-palette shift for reported OOD evaluation. The BDD
+notebook remains a practical reconstruction based on ResNet50 ImageNet
+features; it is not the exact paper setup that used the unavailable
+Faster-RCNN/CBM-AUC feature archive.
 
 ## Quick start
 
@@ -75,6 +77,16 @@ Evaluate an existing MiniKandinsky ensemble:
 ```powershell
 python colab_runner.py --job metabears_minikandinsky --minikand-checkpoints <seed-0.pt> <seed-10.pt> <seed-20.pt> --minikand-intervention figure_permute --minikand-ood-transform palette_desaturate
 ```
+
+Run the MiniKandinsky v1 held-out-shift protocol:
+
+```powershell
+python colab_runner.py --job metabears_minikandinsky --minikand-checkpoints <seed-0.pt> <seed-10.pt> <seed-20.pt> --minikand-intervention figure_permute --minikand-representation-key pCS --minikand-representation-normalization zscore_l2 --minikand-ood-validation-transform palette_desaturate --minikand-ood-transform palette_pastel --minikand-shortcut-max-false-review-rate 0.05 --minikand-familiarity-max-false-review-rate 0.05
+```
+
+The Colab notebook can also train and evaluate a matched `c_sup=0`, `w_c=0`
+ensemble. Its checkpoints use distinct filenames and Drive directories, so
+they cannot overwrite the supervised baseline.
 
 Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
 

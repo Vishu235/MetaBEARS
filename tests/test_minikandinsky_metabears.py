@@ -13,6 +13,7 @@ from XOR_MNIST.metacog.minikandinsky import (
     align_permuted_minikandinsky_concepts,
     cycle_minikandinsky_palette,
     desaturate_minikandinsky_palette,
+    pastelize_minikandinsky_palette,
     permute_minikandinsky_figures,
 )
 from XOR_MNIST.metacog.minikandinsky_runner import _collect_provenance
@@ -151,6 +152,26 @@ class MiniKandinskyInterventionTests(unittest.TestCase):
         np.testing.assert_allclose(transformed[0, :, 0, 1], 0.70)
         np.testing.assert_allclose(transformed[0, :, 0, 2], 0.15)
         np.testing.assert_allclose(transformed[0, :, 0, 3], 1.0)
+
+    def test_pastel_shift_preserves_background_and_color_identity(self) -> None:
+        images = np.array(
+            [[[[1.0, 1.0, 0.0, 1.0]], [[0.0, 1.0, 0.0, 1.0]], [[0.0, 0.0, 1.0, 1.0]]]],
+            dtype=np.float32,
+        )
+
+        transformed = pastelize_minikandinsky_palette(images)
+
+        np.testing.assert_allclose(
+            transformed[0, :, 0, :],
+            np.array(
+                [
+                    [1.0, 1.0, 0.45, 1.0],
+                    [0.45, 1.0, 0.45, 1.0],
+                    [0.45, 0.45, 1.0, 1.0],
+                ],
+                dtype=np.float32,
+            ),
+        )
 
 
 if __name__ == "__main__":

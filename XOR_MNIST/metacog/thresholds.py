@@ -140,6 +140,12 @@ def select_review_threshold(
     negative_count = labels.shape[0] - failure_count
 
     candidates = np.unique(risk)
+    if target_precision is not None or max_false_review_rate is not None:
+        # A threshold immediately above the largest observed risk represents
+        # the valid "review nobody" operating point. This matters when a
+        # strict false-review budget cannot be met by flagging even one item.
+        no_review_threshold = np.nextafter(candidates[-1], np.inf)
+        candidates = np.append(candidates, no_review_threshold)
     candidate_count = candidates.shape[0]
     precisions = np.empty(candidate_count, dtype=np.float64)
     recalls = np.empty(candidate_count, dtype=np.float64)

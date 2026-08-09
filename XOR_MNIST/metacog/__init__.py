@@ -43,6 +43,7 @@ from .minikandinsky import (
     cycle_minikandinsky_palette,
     desaturate_minikandinsky_palette,
     get_minikandinsky_intervention,
+    pastelize_minikandinsky_palette,
     permute_minikandinsky_figures,
 )
 from .experiment import (
@@ -127,6 +128,7 @@ __all__ = [
     "get_intervention",
     "get_minikandinsky_intervention",
     "neutralize_halfmnist_label_patch",
+    "pastelize_minikandinsky_palette",
     "remove_halfmnist_label_patch",
     "probe_concept_consistency",
     "precision_recall_curve",
