@@ -84,9 +84,10 @@ Run the MiniKandinsky v1 held-out-shift protocol:
 python colab_runner.py --job metabears_minikandinsky --minikand-checkpoints <seed-0.pt> <seed-10.pt> <seed-20.pt> --minikand-intervention figure_permute --minikand-representation-key pCS --minikand-representation-normalization zscore_l2 --minikand-ood-validation-transform palette_desaturate --minikand-ood-transform palette_pastel --minikand-shortcut-max-false-review-rate 0.05 --minikand-familiarity-max-false-review-rate 0.05
 ```
 
-The Colab notebook can also train and evaluate a matched `c_sup=0`, `w_c=0`
-ensemble. Its checkpoints use distinct filenames and Drive directories, so
-they cannot overwrite the supervised baseline.
+The Colab notebook trains a matched v1 pair under the corrected differentiable
+MiniKandinsky task loss: `c_sup=1`, `w_c=10` and `c_sup=0`, `w_c=0`. All six
+checkpoints use a `v1-task-loss` filename tag and separate Drive directories,
+so they cannot overwrite the original v0 supervised baseline.
 
 Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
 

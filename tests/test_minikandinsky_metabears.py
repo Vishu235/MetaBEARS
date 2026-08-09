@@ -1,9 +1,11 @@
 """Tests for the MiniKandinsky MetaBEARS adapter and controls."""
 
 import unittest
+from argparse import Namespace
 from unittest.mock import patch
 
 import numpy as np
+import torch
 
 from XOR_MNIST.metacog import collect_ensemble_predictions
 from XOR_MNIST.metacog.minikandinsky import (
@@ -17,6 +19,7 @@ from XOR_MNIST.metacog.minikandinsky import (
     permute_minikandinsky_figures,
 )
 from XOR_MNIST.metacog.minikandinsky_runner import _collect_provenance
+from XOR_MNIST.utils.losses import KAND_Classification
 
 
 def _categorical_probabilities(batch_size: int) -> np.ndarray:
@@ -48,6 +51,23 @@ class FakeRawMiniKandinskyModel:
 
 
 class MiniKandinskyAdapterTests(unittest.TestCase):
+    def test_minikandinsky_task_loss_is_differentiable_without_concept_loss(self) -> None:
+        task_probabilities = torch.tensor(
+            [[0.8, 0.2], [0.3, 0.7]],
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        labels = torch.tensor([[0, 1, 0], [1, 0, 1]])
+
+        loss, _ = KAND_Classification(
+            {"YS": task_probabilities, "LABELS": labels},
+            Namespace(model="minikanddpl", task="mini_patterns_bombazza"),
+        )
+        loss.backward()
+
+        self.assertTrue(loss.requires_grad)
+        self.assertIsNotNone(task_probabilities.grad)
+
     def test_unfrozen_runner_passes_explicit_null_protocol(self) -> None:
         with patch(
             "XOR_MNIST.metacog.minikandinsky_runner.collect_run_provenance",

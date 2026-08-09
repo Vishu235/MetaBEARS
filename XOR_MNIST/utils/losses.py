@@ -226,7 +226,7 @@ def KAND_Classification(out_dict: dict, args):
         weight = torch.tensor([0.5, 0.5], device=out.device)
         final_weight = torch.tensor([0.5, 0.5], device=out.device)
 
-    if args.model in ["kanddpl"]:
+    if args.model in ["kanddpl", "minikanddpl"]:
         # loss = torch.tensor(1e-5)
         loss = F.nll_loss(
             out.log(),

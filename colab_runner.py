@@ -303,8 +303,9 @@ def _run_minikand(args, *, epochs, save_checkpoint):
     if save_checkpoint:
         command.append("--checkout")
     _run(command, args.repo_root / "XOR_MNIST")
-    if save_checkpoint and not (
-        args.minikand_c_sup == 1.0 and args.minikand_w_c == 10.0
+    if save_checkpoint and (
+        args.minikand_checkpoint_tag is not None
+        or not (args.minikand_c_sup == 1.0 and args.minikand_w_c == 10.0)
     ):
         source = (
             args.repo_root
@@ -315,9 +316,14 @@ def _run_minikand(args, *, epochs, save_checkpoint):
         )
         supervision = format(args.minikand_c_sup, "g").replace(".", "p")
         weight = format(args.minikand_w_c, "g").replace(".", "p")
+        tag = (
+            f"{args.minikand_checkpoint_tag}-"
+            if args.minikand_checkpoint_tag is not None
+            else ""
+        )
         destination = source.with_name(
             "minikandinsky-minikanddpl-"
-            f"csup-{supervision}-wc-{weight}-seed-{args.seed}-end.pt"
+            f"{tag}csup-{supervision}-wc-{weight}-seed-{args.seed}-end.pt"
         )
         if not source.is_file():
             raise SystemExit(
@@ -590,6 +596,12 @@ def parse_args():
         type=float,
         default=10.0,
         help="MiniKandinsky concept-loss weight for training/loading.",
+    )
+    parser.add_argument(
+        "--minikand-checkpoint-tag",
+        default=None,
+        choices=["v1-task-loss"],
+        help="Optional protocol tag used to preserve earlier checkpoints.",
     )
     parser.add_argument(
         "--minikand-representation-key",
