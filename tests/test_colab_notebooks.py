@@ -60,5 +60,49 @@ class MiniKandinskyNotebookTests(unittest.TestCase):
         )
 
 
+class BddOiaNotebookTests(unittest.TestCase):
+    def test_cells_are_ordered_resumable_and_code_compiles(self) -> None:
+        path = REPOSITORY_ROOT / "colab" / "MetaBEARS_BDD_OIA.ipynb"
+        notebook = json.loads(path.read_text(encoding="utf-8"))
+        titles = []
+        sources = []
+        for cell_index, cell in enumerate(notebook["cells"]):
+            if cell["cell_type"] != "code":
+                continue
+            source = "".join(cell["source"])
+            sources.append(source)
+            titles.append(source.splitlines()[0])
+            compile(source, f"{path}:cell-{cell_index + 1}", "exec")
+
+        self.assertEqual(
+            titles,
+            [
+                f"#@title {number}. {name}"
+                for number, name in enumerate(
+                    (
+                        "Configuration",
+                        "Mount Google Drive",
+                        "Clone or update MetaBEARS",
+                        "Install Colab-safe dependencies",
+                        "Diagnostics and input validation",
+                        "Reusable BDD job helper",
+                        "Restore reusable full ResNet50 features from Drive",
+                        "BDD-OIA smoke preprocessing and training",
+                        "Full BDD-OIA ResNet50 preprocessing",
+                        "Full multi-seed BDD-OIA baseline training",
+                        "Build a compact BDD result summary",
+                        "Archive repository-side outputs to Drive",
+                    ),
+                    start=1,
+                )
+            ],
+        )
+        notebook_source = "\n".join(sources)
+        self.assertIn("bears_data", notebook_source)
+        self.assertIn("completed_run.json", notebook_source)
+        self.assertIn("'_entropy' if entropy_weight", notebook_source)
+        self.assertIn("'_csup' if concept_weight", notebook_source)
+
+
 if __name__ == "__main__":
     unittest.main()

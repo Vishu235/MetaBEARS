@@ -16,7 +16,8 @@ The proposed novelty combines a **concept consistency probe** with a **meta-cogn
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
 - Phase II HalfMNIST: frozen — the v4 leave-one-intervention-out study and v5 half-swap negative control are complete across seeds 0, 10, and 20.
-- Phase II MiniKandinsky: v1 evaluated; exploratory v2 ready — v1 preserves the supervised result but exposes task-only collapse and reversed familiarity on the pastel shift. v2 adds entropy-regularized task-only training and validation-only representation selection before any new OOD test is defined.
+- Phase II MiniKandinsky: frozen validation study — the v3 fusion candidate and v4 uncertainty ablation are immutable. Predictive entropy outperforms fusion on desaturation, so no universal OOD-superiority claim is made.
+- Phase II BDD-OIA: baseline workflow ready — smoke validation, reusable ResNet50 preprocessing, resumable multi-seed training, and action/concept summary generation are available in the dedicated Colab notebook.
 
 ## Repository layout
 
@@ -45,13 +46,19 @@ layouts, entry points, and persistence requirements:
   uniquely named multi-seed BDD variants without overwriting prior runs.
 
 The MiniKandinsky adapter regroups the legacy model output into 18 categorical
-concepts and selects the final binary task target. Its controls include cyclic
-figure permutation and global palette cycling with color-class realignment.
-The v1 protocol uses desaturated validation images only for calibration and
-reserves a separate pastel-palette shift for reported OOD evaluation. The BDD
-notebook remains a practical reconstruction based on ResNet50 ImageNet
-features; it is not the exact paper setup that used the unavailable
-Faster-RCNN/CBM-AUC feature archive.
+concepts and selects the final binary task target. Its validation study is
+frozen with an explicit negative ablation: task uncertainty detects palette
+desaturation more effectively than the proposed fusion. The BDD notebook
+remains a practical reconstruction based on ResNet50 ImageNet features; it is
+not the exact paper setup that used the unavailable Faster-RCNN/CBM-AUC
+feature archive.
+
+For the first BDD-OIA run, keep only `RUN_SMOKE=True`. The notebook expects the
+existing archive at `PES - Semester 4/bears_data/lastframe.zip`. Once smoke
+preprocessing and one-epoch training pass, enable full preprocessing only if
+the reusable Drive feature directory is absent. Full baseline runs persist a
+completion record per condition and seed, so a disconnected runtime can reuse
+finished runs.
 
 ## Quick start
 
@@ -106,7 +113,8 @@ After v3 acceptance, the candidate configuration and source-artifact hashes
 are recorded in `minikandinsky_results_freeze_v3.json`. The v4 validation-only
 ablation leaves that candidate unchanged and compares it with label
 disagreement, predictive entropy, and confidence deficit as standard
-uncertainty-only controls.
+uncertainty-only controls. Its negative result and artifact hashes are frozen
+in `minikandinsky_results_freeze_v4.json`.
 
 Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
 

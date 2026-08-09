@@ -1,0 +1,103 @@
+{
+  "freeze_id": "metabears-minikandinsky-uncertainty-ablation-v4",
+  "status": "frozen_negative_ablation",
+  "frozen_at_utc": "2026-08-09T16:09:00.3907319Z",
+  "source_artifacts": [
+    {
+      "filename": "uncertainty_ablation.json",
+      "size_bytes": 14978,
+      "sha256": "ebdf4880dd41b049c1a02062232adfc4e25fa706bc9a2b8dc40497d692a02840",
+      "storage_policy": "external_not_tracked_in_git"
+    },
+    {
+      "filename": "ablation_manifest_20260809_153851.json",
+      "size_bytes": 2788,
+      "sha256": "f46eedf03013ae178c994905d229d0a8d6e4c784c2606b3c961ef0c43957633a",
+      "storage_policy": "external_not_tracked_in_git"
+    }
+  ],
+  "lineage": {
+    "parent_freeze_id": "metabears-minikandinsky-validation-candidate-v3",
+    "parent_freeze_file": "minikandinsky_results_freeze_v3.json",
+    "scope": "validation-only uncertainty baseline ablation; does not replace or retune the v3 fusion candidate"
+  },
+  "run_provenance": {
+    "git_commit": "880bf7c46d2262096ad575dae70a0f33b14d7264",
+    "git_dirty": false,
+    "dataset_sha256": "37517e85211859116e7c1e9f04288845e00e32f380b33fdf8e5834bad7bcffce",
+    "checkpoint_sha256": {
+      "seed_0": "6a6a7390b67c27a39c4d4be6623e087af29bd27789cfc2103b4f774e02557424",
+      "seed_10": "a27cb80caca78109ea7b74446cf28babb0fe1b234775c9d99ce28187542eef35",
+      "seed_20": "d5b3abdf1c316a077cb1f5797fb1b91c5f3e4dc74131cd10f2635d91fa8d700d"
+    },
+    "python": "3.12.13",
+    "torch": "2.11.0+cpu",
+    "torchvision": "0.26.0+cpu",
+    "numpy": "2.0.2"
+  },
+  "validation_protocol": {
+    "dataset": "minikandinsky",
+    "id_samples": 1000,
+    "ood_samples": 1000,
+    "ood_transform": "palette_desaturate",
+    "test_split_evaluated": false,
+    "maximum_false_review_rate": 0.05,
+    "representation_key": "CS",
+    "normalization": "zscore_l2",
+    "cross_fit_folds": 5,
+    "shrinkage": 0.1
+  },
+  "frozen_operating_points": {
+    "predictive_entropy": {
+      "threshold": 0.28859093373707023,
+      "auroc": 0.997433,
+      "average_precision": 0.9977295143696718,
+      "precision": 0.9515972894482091,
+      "recall": 0.983,
+      "false_review_rate": 0.05
+    },
+    "confidence_deficit": {
+      "threshold": 0.050517380237579346,
+      "auroc": 0.997433,
+      "average_precision": 0.9977295143696718,
+      "precision": 0.9515972894482091,
+      "recall": 0.983,
+      "false_review_rate": 0.05
+    },
+    "label_disagreement": {
+      "threshold": 0.0072484542521700475,
+      "auroc": 0.951432,
+      "average_precision": 0.9646268327824599,
+      "precision": 0.9441964285714286,
+      "recall": 0.846,
+      "false_review_rate": 0.05
+    },
+    "class_conditional_disagreement_fusion": {
+      "threshold": 0.8185,
+      "auroc": 0.9027305,
+      "average_precision": 0.9037943409866067,
+      "precision": 0.9194847020933977,
+      "recall": 0.571,
+      "false_review_rate": 0.05
+    }
+  },
+  "conclusion": {
+    "fusion_outperforms_uncertainty_baselines": false,
+    "predictive_entropy_and_confidence_deficit_have_identical_ranking": true,
+    "interpretation": "The desaturated validation shift is exposed primarily by ordinary task uncertainty; the MetaBEARS fusion is not superior on this shift.",
+    "reporting_requirement": "Report this as a negative ablation and do not claim universal OOD superiority."
+  },
+  "integrity_checks": {
+    "v3_fusion_reproduction_delta_zero": true,
+    "same_dataset_fingerprint_as_v3": true,
+    "same_checkpoint_fingerprints_as_v3": true,
+    "test_split_evaluated": false
+  },
+  "freeze_policy": {
+    "primary_evidence_for_uncertainty_ablation": true,
+    "replaces_v3_candidate": false,
+    "post_freeze_tuning_on_these_validation_results": false,
+    "future_held_out_evaluation_must_apply_frozen_thresholds_without_recalibration": true,
+    "reporting_only_derivations_must_preserve_source_artifact_hashes": true
+  }
+}

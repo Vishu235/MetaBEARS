@@ -106,6 +106,31 @@ class FakeRawMiniKandinskyModel:
 
 
 class MiniKandinskyAdapterTests(unittest.TestCase):
+    def test_frozen_v4_ablation_preserves_negative_result(self) -> None:
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "minikandinsky_results_freeze_v4.json"
+        )
+        freeze = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(freeze["status"], "frozen_negative_ablation")
+        self.assertFalse(freeze["validation_protocol"]["test_split_evaluated"])
+        self.assertFalse(
+            freeze["conclusion"]["fusion_outperforms_uncertainty_baselines"]
+        )
+        operating_points = freeze["frozen_operating_points"]
+        self.assertGreater(
+            operating_points["predictive_entropy"]["auroc"],
+            operating_points["class_conditional_disagreement_fusion"]["auroc"],
+        )
+        self.assertEqual(
+            operating_points["predictive_entropy"]["auroc"],
+            operating_points["confidence_deficit"]["auroc"],
+        )
+        self.assertTrue(
+            freeze["integrity_checks"]["v3_fusion_reproduction_delta_zero"]
+        )
+
     def test_frozen_v3_candidate_records_reproducible_configuration(self) -> None:
         path = (
             Path(__file__).resolve().parents[1]
