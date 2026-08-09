@@ -1,7 +1,9 @@
 """Tests for the MiniKandinsky MetaBEARS adapter and controls."""
 
-import unittest
 from argparse import Namespace
+import json
+from pathlib import Path
+import unittest
 from unittest.mock import patch
 
 import numpy as np
@@ -27,8 +29,11 @@ from XOR_MNIST.metacog.minikandinsky_representation_sweep import (
 from XOR_MNIST.metacog.minikandinsky_scoring_sweep import (
     _cross_fitted_distances,
     _fit_shrinkage_statistics,
+    _confidence_deficit,
     _label_disagreement,
+    _load_and_validate_frozen_candidate,
     _mahalanobis_scores,
+    _predictive_entropy,
 )
 from XOR_MNIST.utils.losses import KAND_Classification
 
@@ -101,6 +106,55 @@ class FakeRawMiniKandinskyModel:
 
 
 class MiniKandinskyAdapterTests(unittest.TestCase):
+    def test_frozen_v3_candidate_records_reproducible_configuration(self) -> None:
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "minikandinsky_results_freeze_v3.json"
+        )
+        freeze = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(freeze["status"], "frozen_validation_candidate")
+        self.assertFalse(freeze["validation_protocol"]["test_split_evaluated"])
+        self.assertEqual(
+            freeze["frozen_configuration"]["scorer"],
+            "class_conditional_disagreement_fusion",
+        )
+        self.assertEqual(freeze["frozen_configuration"]["threshold"], 0.8185)
+        self.assertEqual(
+            set(freeze["run_provenance"]["checkpoint_sha256"]),
+            {"seed_0", "seed_10", "seed_20"},
+        )
+        self.assertTrue(
+            all(
+                len(artifact["sha256"]) == 64
+                for artifact in freeze["source_artifacts"]
+            )
+        )
+
+        args = Namespace(
+            frozen_candidate_protocol=str(path),
+            representation_key="CS",
+            normalization="zscore_l2",
+            cross_fit_folds=5,
+            shrinkage=0.1,
+        )
+        provenance = {
+            "checkpoints": [
+                {"sha256": value}
+                for value in freeze["run_provenance"][
+                    "checkpoint_sha256"
+                ].values()
+            ],
+            "dataset_artifacts": [
+                {"sha256": freeze["run_provenance"]["dataset_sha256"]}
+            ],
+        }
+        loaded = _load_and_validate_frozen_candidate(args, provenance)
+        self.assertEqual(loaded["freeze_id"], freeze["freeze_id"])
+        provenance["checkpoints"][0]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "Checkpoint fingerprints"):
+            _load_and_validate_frozen_candidate(args, provenance)
+
     def test_cross_fitted_scoring_distinguishes_distant_ood_samples(self) -> None:
         member_one = np.array(
             [
@@ -161,8 +215,12 @@ class MiniKandinskyAdapterTests(unittest.TestCase):
             np.zeros((2, 2, 1)), np.zeros(2), probabilities
         )
         disagreement = _label_disagreement(predictions)
+        predictive_entropy = _predictive_entropy(predictions)
+        confidence_deficit = _confidence_deficit(predictions)
         self.assertAlmostEqual(disagreement[0], 0.0)
         self.assertGreater(disagreement[1], disagreement[0])
+        self.assertGreater(predictive_entropy[1], predictive_entropy[0])
+        self.assertGreater(confidence_deficit[1], confidence_deficit[0])
 
     def test_validation_only_sweep_separates_distant_ood_representations(self) -> None:
         id_values = np.array(

@@ -52,6 +52,7 @@ class MiniKandinskyNotebookTests(unittest.TestCase):
                         "Validate v2 sweep checkpoints",
                         "Run validation-only representation sweep",
                         "Run fixed-representation v3 scoring sweep",
+                        "Run frozen-candidate v4 uncertainty ablation",
                     ),
                     start=1,
                 )

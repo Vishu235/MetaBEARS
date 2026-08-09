@@ -1,0 +1,82 @@
+{
+  "freeze_id": "metabears-minikandinsky-validation-candidate-v3",
+  "status": "frozen_validation_candidate",
+  "frozen_at_utc": "2026-08-09T15:17:42.4996430Z",
+  "source_artifacts": [
+    {
+      "filename": "scoring_selection.json",
+      "size_bytes": 10577,
+      "sha256": "f5606c9a7ce4f4931dc03cfdcaaf0b2c4e351390e51cf0be5b89c748eb125e46",
+      "storage_policy": "external_not_tracked_in_git"
+    },
+    {
+      "filename": "scoring_manifest_20260809_151059.json",
+      "size_bytes": 1889,
+      "sha256": "b5be8a461dc760eaf81324a7fc7df3f447dc0f2e7fc56131d0cdb218a0f3d441",
+      "storage_policy": "external_not_tracked_in_git"
+    }
+  ],
+  "run_provenance": {
+    "git_commit": "fbf7edacbcaf5bfce73b51116b1d933e79a53378",
+    "git_dirty": false,
+    "dataset_sha256": "37517e85211859116e7c1e9f04288845e00e32f380b33fdf8e5834bad7bcffce",
+    "checkpoint_sha256": {
+      "seed_0": "6a6a7390b67c27a39c4d4be6623e087af29bd27789cfc2103b4f774e02557424",
+      "seed_10": "a27cb80caca78109ea7b74446cf28babb0fe1b234775c9d99ce28187542eef35",
+      "seed_20": "d5b3abdf1c316a077cb1f5797fb1b91c5f3e4dc74131cd10f2635d91fa8d700d"
+    },
+    "python": "3.12.13",
+    "torch": "2.11.0+cpu",
+    "torchvision": "0.26.0+cpu",
+    "numpy": "2.0.2"
+  },
+  "frozen_configuration": {
+    "dataset": "minikandinsky",
+    "task": "mini_patterns_bombazza",
+    "model": "minikanddpl",
+    "ensemble_members": 3,
+    "training_concept_supervision": 1.0,
+    "training_concept_weight": 10.0,
+    "representation_key": "CS",
+    "normalization": "zscore_l2",
+    "cross_fit_folds": 5,
+    "shrinkage": 0.1,
+    "scorer": "class_conditional_disagreement_fusion",
+    "fusion_weights": {
+      "class_conditional_distance_percentile": 0.5,
+      "label_jensen_shannon_disagreement_percentile": 0.5
+    },
+    "threshold": 0.8185,
+    "higher_is_riskier": true
+  },
+  "validation_protocol": {
+    "id_samples": 1000,
+    "ood_samples": 1000,
+    "ood_transform": "palette_desaturate",
+    "test_split_evaluated": false,
+    "maximum_false_review_rate": 0.05,
+    "minimum_auroc": 0.7,
+    "minimum_average_precision": 0.7,
+    "minimum_recall": 0.5
+  },
+  "observed_validation_result": {
+    "auroc": 0.9027305,
+    "average_precision": 0.9037943409866067,
+    "precision": 0.9194847020933977,
+    "recall": 0.571,
+    "f1": 0.7045033929673041,
+    "false_review_rate": 0.05,
+    "detected_ood_count": 571,
+    "false_review_count": 50,
+    "task_accuracy": 1.0,
+    "concept_accuracy": 0.9882222222222222,
+    "exact_concept_accuracy": 0.93
+  },
+  "freeze_policy": {
+    "role": "accepted validation candidate, not final held-out evidence",
+    "v4_uncertainty_ablation_may_compare_but_not_retune_this_candidate": true,
+    "post_freeze_tuning_on_future_held_out_test_results": false,
+    "new_held_out_ood_transform_must_be_declared_before_evaluation": true,
+    "future_reporting_must_preserve_source_artifact_hashes": true
+  }
+}

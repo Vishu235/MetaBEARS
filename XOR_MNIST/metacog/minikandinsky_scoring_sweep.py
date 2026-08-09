@@ -35,12 +35,24 @@ from .minikandinsky_runner import (
 from .thresholds import select_review_threshold
 
 
-SCORERS = (
+SELECTION_SCORERS = (
     "nearest",
     "shrinkage_mahalanobis",
     "class_conditional_mahalanobis",
     "class_conditional_disagreement_fusion",
 )
+
+SCORERS = SELECTION_SCORERS + (
+    "label_disagreement",
+    "predictive_entropy",
+    "confidence_deficit",
+)
+
+DISTANCE_SCORERS = {
+    "nearest",
+    "shrinkage_mahalanobis",
+    "class_conditional_mahalanobis",
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,7 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["none", "zscore", "l2", "zscore_l2"],
         default="zscore_l2",
     )
-    parser.add_argument("--scorers", nargs="+", choices=SCORERS, default=list(SCORERS))
+    parser.add_argument(
+        "--scorers",
+        nargs="+",
+        choices=SCORERS,
+        default=list(SELECTION_SCORERS),
+    )
+    parser.add_argument(
+        "--analysis-mode",
+        choices=["selection", "uncertainty_ablation"],
+        default="selection",
+    )
     parser.add_argument("--cross-fit-folds", type=int, default=5)
     parser.add_argument("--shrinkage", type=float, default=0.10)
     parser.add_argument("--max-false-review-rate", type=float, default=0.05)
@@ -79,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--minimum-recall", type=float, default=0.50)
     parser.add_argument("--max-batches", type=int, default=None)
     parser.add_argument("--provenance-cache", default=None)
+    parser.add_argument("--frozen-candidate-protocol", default=None)
     return parser
 
 
@@ -277,6 +300,26 @@ def _label_disagreement(predictions: EnsemblePredictions) -> np.ndarray:
     return np.maximum(entropy_of_mean - mean_entropy, 0.0) / normalizer
 
 
+def _predictive_entropy(predictions: EnsemblePredictions) -> np.ndarray:
+    probabilities = np.clip(
+        np.asarray(predictions.label_member_probabilities, dtype=np.float64).mean(
+            axis=0
+        ),
+        1e-12,
+        1.0,
+    )
+    return -np.sum(probabilities * np.log(probabilities), axis=-1) / np.log(
+        probabilities.shape[-1]
+    )
+
+
+def _confidence_deficit(predictions: EnsemblePredictions) -> np.ndarray:
+    probabilities = np.asarray(
+        predictions.label_member_probabilities, dtype=np.float64
+    ).mean(axis=0)
+    return 1.0 - np.max(probabilities, axis=-1)
+
+
 def _empirical_percentiles(reference: np.ndarray, values: np.ndarray) -> np.ndarray:
     ordered = np.sort(np.asarray(reference, dtype=np.float64).reshape(-1))
     query = np.asarray(values, dtype=np.float64).reshape(-1)
@@ -323,6 +366,52 @@ def _accepted(candidate: Dict[str, Any], args: argparse.Namespace) -> bool:
         and threshold["recall"] >= args.minimum_recall
         and threshold["false_review_rate"] <= args.max_false_review_rate
     )
+
+
+def _load_and_validate_frozen_candidate(
+    args: argparse.Namespace,
+    provenance: Dict[str, Any],
+) -> Dict[str, Any]:
+    default_path = (
+        Path(__file__).resolve().parents[2]
+        / "minikandinsky_results_freeze_v3.json"
+    )
+    path = (
+        Path(args.frozen_candidate_protocol).expanduser().resolve()
+        if args.frozen_candidate_protocol
+        else default_path
+    )
+    freeze = json.loads(path.read_text(encoding="utf-8"))
+    configuration = freeze["frozen_configuration"]
+    expected_configuration = {
+        "representation_key": args.representation_key,
+        "normalization": args.normalization,
+        "cross_fit_folds": args.cross_fit_folds,
+        "shrinkage": args.shrinkage,
+    }
+    mismatches = {
+        name: (configuration[name], value)
+        for name, value in expected_configuration.items()
+        if configuration[name] != value
+    }
+    if mismatches:
+        raise ValueError(f"Frozen v3 configuration mismatch: {mismatches}.")
+
+    expected_checkpoints = set(
+        freeze["run_provenance"]["checkpoint_sha256"].values()
+    )
+    observed_checkpoints = {
+        item["sha256"] for item in provenance["checkpoints"]
+    }
+    if observed_checkpoints != expected_checkpoints:
+        raise ValueError("Checkpoint fingerprints do not match frozen v3.")
+    expected_dataset = freeze["run_provenance"]["dataset_sha256"]
+    observed_datasets = {
+        item["sha256"] for item in provenance["dataset_artifacts"]
+    }
+    if observed_datasets != {expected_dataset}:
+        raise ValueError("Dataset fingerprint does not match frozen v3.")
+    return freeze
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -386,6 +475,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if scorer == "class_conditional_disagreement_fusion"
             else scorer
         )
+        if distance_scorer not in DISTANCE_SCORERS:
+            continue
         if distance_scorer not in score_pairs:
             score_pairs[distance_scorer] = _cross_fitted_distances(
                 normalized_id,
@@ -410,6 +501,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             ood_scores = 0.5 * _empirical_percentiles(
                 id_distance, ood_distance
             ) + 0.5 * _empirical_percentiles(id_disagreement, ood_disagreement)
+        elif scorer == "label_disagreement":
+            id_scores = _label_disagreement(validation_predictions)
+            ood_scores = _label_disagreement(ood_predictions)
+        elif scorer == "predictive_entropy":
+            id_scores = _predictive_entropy(validation_predictions)
+            ood_scores = _predictive_entropy(ood_predictions)
+        elif scorer == "confidence_deficit":
+            id_scores = _confidence_deficit(validation_predictions)
+            ood_scores = _confidence_deficit(ood_predictions)
         else:
             id_scores, ood_scores = score_pairs[scorer]
         candidate = _candidate(
@@ -431,11 +531,71 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         reverse=True,
     )
     accepted = [item for item in ordered if item["acceptance_criteria_satisfied"]]
+    frozen_fusion = next(
+        (
+            item
+            for item in ordered
+            if item["scorer"] == "class_conditional_disagreement_fusion"
+        ),
+        None,
+    )
+    baseline_comparison = []
+    if args.analysis_mode == "uncertainty_ablation":
+        if frozen_fusion is None:
+            raise SystemExit(
+                "The uncertainty ablation requires "
+                "class_conditional_disagreement_fusion."
+            )
+    provenance = _collect_provenance(checkpoint_paths, args.provenance_cache)
+    frozen_reference = None
+    reproduction_delta = None
+    if args.analysis_mode == "uncertainty_ablation":
+        frozen_reference = _load_and_validate_frozen_candidate(args, provenance)
+        observed = frozen_reference["observed_validation_result"]
+        frozen_threshold = frozen_reference["frozen_configuration"]["threshold"]
+        fusion_threshold = frozen_fusion["threshold_selection"]
+        reproduction_delta = {
+            "auroc": frozen_fusion["auroc"] - observed["auroc"],
+            "average_precision": (
+                frozen_fusion["average_precision"]
+                - observed["average_precision"]
+            ),
+            "recall": fusion_threshold["recall"] - observed["recall"],
+            "false_review_rate": (
+                fusion_threshold["false_review_rate"]
+                - observed["false_review_rate"]
+            ),
+            "threshold": fusion_threshold["threshold"] - frozen_threshold,
+        }
+        for item in ordered:
+            if item is frozen_fusion:
+                continue
+            baseline_comparison.append(
+                {
+                    "baseline": item["scorer"],
+                    "fusion_minus_baseline_auroc": (
+                        frozen_fusion["auroc"] - item["auroc"]
+                    ),
+                    "fusion_minus_baseline_average_precision": (
+                        frozen_fusion["average_precision"]
+                        - item["average_precision"]
+                    ),
+                    "fusion_minus_baseline_recall": (
+                        frozen_fusion["threshold_selection"]["recall"]
+                        - item["threshold_selection"]["recall"]
+                    ),
+                }
+            )
     destination = Path(args.output_dir).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
     result = {
         "protocol": {
-            "name": "minikandinsky_fixed_representation_scoring_selection_v3",
+            "name": (
+                "minikandinsky_uncertainty_baseline_ablation_v4"
+                if args.analysis_mode == "uncertainty_ablation"
+                else "minikandinsky_fixed_representation_scoring_selection_v3"
+            ),
+            "analysis_mode": args.analysis_mode,
             "selection_split": "ID validation plus desaturated-palette OOD validation",
             "test_split_evaluated": False,
             "representation_frozen_from_v2": {
@@ -477,26 +637,39 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "max_batches": args.max_batches,
             "command_arguments": sys.argv[1:] if argv is None else list(argv),
         },
-        "provenance": _collect_provenance(
-            checkpoint_paths, args.provenance_cache
-        ),
+        "provenance": provenance,
         "validation_prediction_metrics": _validation_metrics(
             validation_predictions
         ),
         "candidate_count": len(ordered),
         "candidates": ordered,
         "best_observed_candidate": ordered[0],
-        "selected_candidate": accepted[0] if accepted else None,
-        "selection_status": "accepted" if accepted else "no_usable_candidate",
+        "selected_candidate": (
+            accepted[0] if accepted and args.analysis_mode == "selection" else None
+        ),
+        "selection_status": (
+            "not_applicable_ablation"
+            if args.analysis_mode == "uncertainty_ablation"
+            else ("accepted" if accepted else "no_usable_candidate")
+        ),
+        "frozen_v3_candidate_result": frozen_fusion,
+        "frozen_v3_reference": frozen_reference,
+        "frozen_v3_reproduction_delta": reproduction_delta,
+        "baseline_comparison": baseline_comparison,
         "limitations": [
             "This exploratory selection uses controlled OOD validation only.",
             "The desaturated OOD validation shift is reused from v2 development.",
             "No test loader is iterated and no held-out OOD result is reported.",
             "The representation is fixed from v2; only the predeclared scorer changes.",
+            "The v4 ablation does not replace or retune the accepted v3 candidate.",
             "A new OOD test transform must be frozen before final evaluation.",
         ],
     }
-    output_path = destination / "scoring_selection.json"
+    output_path = destination / (
+        "uncertainty_ablation.json"
+        if args.analysis_mode == "uncertainty_ablation"
+        else "scoring_selection.json"
+    )
     output_path.write_text(
         json.dumps(result, indent=2, sort_keys=True), encoding="utf-8"
     )

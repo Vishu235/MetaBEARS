@@ -464,7 +464,7 @@ def minikand_representation_sweep(args):
     _run(command, args.repo_root / "XOR_MNIST")
 
 
-def minikand_scoring_sweep(args):
+def minikand_scoring_sweep(args, *, uncertainty_ablation=False):
     ensure_kandinsky_data(args.repo_root)
     if not args.minikand_checkpoints or len(args.minikand_checkpoints) < 2:
         raise SystemExit(
@@ -476,7 +476,11 @@ def minikand_scoring_sweep(args):
         output_dir = (
             args.repo_root
             / "colab_outputs"
-            / "minikandinsky_scoring_sweep"
+            / (
+                "minikandinsky_uncertainty_ablation"
+                if uncertainty_ablation
+                else "minikandinsky_scoring_sweep"
+            )
             / timestamp
         )
     command = [
@@ -512,6 +516,18 @@ def minikand_scoring_sweep(args):
         "--ensemble-checkpoints",
         *args.minikand_checkpoints,
     ]
+    if uncertainty_ablation:
+        command.extend(
+            [
+                "--analysis-mode",
+                "uncertainty_ablation",
+                "--scorers",
+                "class_conditional_disagreement_fusion",
+                "label_disagreement",
+                "predictive_entropy",
+                "confidence_deficit",
+            ]
+        )
     if args.metabears_max_batches is not None:
         command.extend(["--max-batches", str(args.metabears_max_batches)])
     _run(command, args.repo_root / "XOR_MNIST")
@@ -648,6 +664,7 @@ def parse_args():
             "metabears_minikandinsky",
             "minikand_representation_sweep",
             "minikand_scoring_sweep",
+            "minikand_uncertainty_ablation",
             "bdd_preprocess_smoke",
             "bdd_train_smoke",
             "bdd_preprocess_full",
@@ -875,6 +892,9 @@ def main():
         "metabears_minikandinsky": metabears_minikandinsky,
         "minikand_representation_sweep": minikand_representation_sweep,
         "minikand_scoring_sweep": minikand_scoring_sweep,
+        "minikand_uncertainty_ablation": lambda parsed: minikand_scoring_sweep(
+            parsed, uncertainty_ablation=True
+        ),
         "bdd_preprocess_smoke": lambda parsed: bdd_preprocess(parsed, full=False),
         "bdd_train_smoke": lambda parsed: bdd_train(parsed, full=False),
         "bdd_preprocess_full": lambda parsed: bdd_preprocess(parsed, full=True),

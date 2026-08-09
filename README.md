@@ -102,6 +102,12 @@ shrinkage Mahalanobis, predicted-class-conditional Mahalanobis, and an
 equal-weight class-conditional/disagreement fusion. The same validation gate
 is retained, and no held-out test data is used during scorer selection.
 
+After v3 acceptance, the candidate configuration and source-artifact hashes
+are recorded in `minikandinsky_results_freeze_v3.json`. The v4 validation-only
+ablation leaves that candidate unchanged and compares it with label
+disagreement, predictive entropy, and confidence deficit as standard
+uncertainty-only controls.
+
 Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
 
 ```powershell
