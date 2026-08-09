@@ -237,6 +237,25 @@ def _configuration(
     }
 
 
+def _collect_provenance(
+    checkpoint_paths: Sequence[Path],
+    provenance_cache: Optional[str],
+) -> dict:
+    """Record an unfrozen extension run with an explicit null protocol."""
+
+    return collect_run_provenance(
+        _xor_root().parent,
+        protocol=None,
+        dataset_paths=[_xor_root() / "data" / "kand-3k.zip"],
+        checkpoint_paths=checkpoint_paths,
+        hash_cache_path=(
+            Path(provenance_cache).expanduser().resolve()
+            if provenance_cache
+            else None
+        ),
+    )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -291,16 +310,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     command_arguments = sys.argv[1:] if argv is None else list(argv)
     configuration = _configuration(args, checkpoint_paths, command_arguments)
-    repo_root = _xor_root().parent
-    provenance = collect_run_provenance(
-        repo_root,
-        dataset_paths=[_xor_root() / "data" / "kand-3k.zip"],
-        checkpoint_paths=checkpoint_paths,
-        hash_cache_path=(
-            Path(args.provenance_cache).expanduser().resolve()
-            if args.provenance_cache
-            else None
-        ),
+    provenance = _collect_provenance(
+        checkpoint_paths,
+        args.provenance_cache,
     )
     result = run_metabears_experiment(
         ensemble,

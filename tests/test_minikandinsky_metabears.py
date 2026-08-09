@@ -1,6 +1,7 @@
 """Tests for the MiniKandinsky MetaBEARS adapter and controls."""
 
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -14,6 +15,7 @@ from XOR_MNIST.metacog.minikandinsky import (
     desaturate_minikandinsky_palette,
     permute_minikandinsky_figures,
 )
+from XOR_MNIST.metacog.minikandinsky_runner import _collect_provenance
 
 
 def _categorical_probabilities(batch_size: int) -> np.ndarray:
@@ -45,6 +47,16 @@ class FakeRawMiniKandinskyModel:
 
 
 class MiniKandinskyAdapterTests(unittest.TestCase):
+    def test_unfrozen_runner_passes_explicit_null_protocol(self) -> None:
+        with patch(
+            "XOR_MNIST.metacog.minikandinsky_runner.collect_run_provenance",
+            return_value={"protocol": None},
+        ) as collect:
+            result = _collect_provenance([], None)
+
+        self.assertEqual(result, {"protocol": None})
+        self.assertIsNone(collect.call_args.kwargs["protocol"])
+
     def test_model_and_target_adapters_feed_generic_collector(self) -> None:
         labels = np.array([[2, 2, 2, 1], [0, 1, 2, 1]], dtype=np.int64)
         concepts = np.arange(36, dtype=np.int64).reshape(2, 3, 6) % 3
