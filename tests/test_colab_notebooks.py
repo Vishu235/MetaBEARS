@@ -51,6 +51,7 @@ class MiniKandinskyNotebookTests(unittest.TestCase):
                         "Train entropy-regularized v2 task-only ensemble",
                         "Validate v2 sweep checkpoints",
                         "Run validation-only representation sweep",
+                        "Run fixed-representation v3 scoring sweep",
                     ),
                     start=1,
                 )

@@ -96,6 +96,12 @@ validation only. A candidate is accepted only if it meets predeclared AUROC,
 average-precision, recall, and false-review criteria. This sweep never iterates
 the test loader; a new held-out OOD transform is frozen only after selection.
 
+The v3 follow-up keeps the strongest supervised representation fixed at
+`CS + zscore_l2`. It uses five-fold cross-fitting to compare nearest-reference,
+shrinkage Mahalanobis, predicted-class-conditional Mahalanobis, and an
+equal-weight class-conditional/disagreement fusion. The same validation gate
+is retained, and no held-out test data is used during scorer selection.
+
 Run MetaBEARS with existing HalfMNIST ensemble checkpoints:
 
 ```powershell

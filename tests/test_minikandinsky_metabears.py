@@ -24,6 +24,12 @@ from XOR_MNIST.metacog.minikandinsky_representation_sweep import (
     _candidate_metrics,
     _validation_metrics,
 )
+from XOR_MNIST.metacog.minikandinsky_scoring_sweep import (
+    _cross_fitted_distances,
+    _fit_shrinkage_statistics,
+    _label_disagreement,
+    _mahalanobis_scores,
+)
 from XOR_MNIST.utils.losses import KAND_Classification
 
 
@@ -54,6 +60,26 @@ def _sweep_predictions(representations: np.ndarray) -> EnsemblePredictions:
     )
 
 
+def _scoring_predictions(
+    representations: np.ndarray,
+    labels: np.ndarray,
+    label_probabilities: np.ndarray,
+) -> EnsemblePredictions:
+    values = np.asarray(representations, dtype=np.float64)
+    members, samples, _ = values.shape
+    concept_probabilities = np.tile(
+        np.array([0.9, 0.1]), (members, samples, 1, 1)
+    )
+    return EnsemblePredictions(
+        concept_member_probabilities=concept_probabilities,
+        label_member_probabilities=np.asarray(label_probabilities),
+        member_representations=values,
+        labels=np.asarray(labels, dtype=np.int64),
+        concepts=np.zeros((samples, 1), dtype=np.int64),
+        batch_sizes=(samples,),
+    )
+
+
 class FakeRawMiniKandinskyModel:
     def __init__(self, member_index: int) -> None:
         self.member_index = member_index
@@ -75,6 +101,69 @@ class FakeRawMiniKandinskyModel:
 
 
 class MiniKandinskyAdapterTests(unittest.TestCase):
+    def test_cross_fitted_scoring_distinguishes_distant_ood_samples(self) -> None:
+        member_one = np.array(
+            [
+                [-0.2, 0.0], [0.0, 0.2], [0.1, -0.1], [0.2, 0.1],
+                [2.8, 3.0], [3.0, 3.2], [3.1, 2.9], [3.2, 3.1],
+            ]
+        )
+        id_values = np.stack([member_one, member_one + 0.05])
+        labels = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+        id_probabilities = np.tile(np.eye(2)[labels], (2, 1, 1))
+        ood_values = np.array(
+            [[[8.0, 8.0], [9.0, 9.0]], [[8.1, 8.1], [9.1, 9.1]]]
+        )
+        ood_labels = np.array([0, 1])
+        ood_probabilities = np.tile(np.eye(2)[ood_labels], (2, 1, 1))
+        id_predictions = _scoring_predictions(
+            id_values, labels, id_probabilities
+        )
+        ood_predictions = _scoring_predictions(
+            ood_values, ood_labels, ood_probabilities
+        )
+
+        id_scores, ood_scores = _cross_fitted_distances(
+            id_predictions,
+            ood_predictions,
+            scorer="class_conditional_mahalanobis",
+            folds=2,
+            seed=0,
+            shrinkage=0.1,
+        )
+
+        self.assertGreater(ood_scores.mean(), id_scores.mean())
+
+    def test_shrinkage_scores_and_disagreement_are_member_preserving(self) -> None:
+        references = np.array(
+            [
+                [[0.0, 0.0], [0.2, 0.1], [3.0, 3.0], [3.2, 3.1]],
+                [[0.1, 0.0], [0.3, 0.1], [3.1, 3.0], [3.3, 3.1]],
+            ]
+        )
+        labels = np.array([0, 0, 1, 1])
+        models = _fit_shrinkage_statistics(
+            references, labels=labels, shrinkage=0.1
+        )
+        far = np.array([[[8.0, 8.0]], [[8.1, 8.0]]])
+        scores = _mahalanobis_scores(
+            far, models, predicted_classes=np.array([1])
+        )
+        self.assertGreater(scores[0], 1.0)
+
+        probabilities = np.array(
+            [
+                [[0.9, 0.1], [0.9, 0.1]],
+                [[0.9, 0.1], [0.1, 0.9]],
+            ]
+        )
+        predictions = _scoring_predictions(
+            np.zeros((2, 2, 1)), np.zeros(2), probabilities
+        )
+        disagreement = _label_disagreement(predictions)
+        self.assertAlmostEqual(disagreement[0], 0.0)
+        self.assertGreater(disagreement[1], disagreement[0])
+
     def test_validation_only_sweep_separates_distant_ood_representations(self) -> None:
         id_values = np.array(
             [[[0.0], [1.0], [3.0], [6.0]], [[0.2], [1.2], [3.2], [6.2]]]

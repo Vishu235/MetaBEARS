@@ -464,6 +464,59 @@ def minikand_representation_sweep(args):
     _run(command, args.repo_root / "XOR_MNIST")
 
 
+def minikand_scoring_sweep(args):
+    ensure_kandinsky_data(args.repo_root)
+    if not args.minikand_checkpoints or len(args.minikand_checkpoints) < 2:
+        raise SystemExit(
+            "Pass at least two trained members with --minikand-checkpoints."
+        )
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = args.minikand_output_dir
+    if output_dir is None:
+        output_dir = (
+            args.repo_root
+            / "colab_outputs"
+            / "minikandinsky_scoring_sweep"
+            / timestamp
+        )
+    command = [
+        sys.executable,
+        "-m",
+        "metacog.minikandinsky_scoring_sweep",
+        "--output-dir",
+        str(output_dir),
+        "--seed",
+        str(args.seed),
+        "--batch-size",
+        str(args.batch_size),
+        "--c-sup",
+        str(args.minikand_c_sup),
+        "--w-c",
+        str(args.minikand_w_c),
+        "--representation-key",
+        args.minikand_representation_key,
+        "--normalization",
+        args.minikand_representation_normalization,
+        "--cross-fit-folds",
+        str(args.minikand_cross_fit_folds),
+        "--shrinkage",
+        str(args.minikand_shrinkage),
+        "--max-false-review-rate",
+        str(args.minikand_familiarity_max_false_review_rate),
+        "--minimum-auroc",
+        str(args.minikand_sweep_minimum_auroc),
+        "--minimum-average-precision",
+        str(args.minikand_sweep_minimum_average_precision),
+        "--minimum-recall",
+        str(args.minikand_sweep_minimum_recall),
+        "--ensemble-checkpoints",
+        *args.minikand_checkpoints,
+    ]
+    if args.metabears_max_batches is not None:
+        command.extend(["--max-batches", str(args.metabears_max_batches)])
+    _run(command, args.repo_root / "XOR_MNIST")
+
+
 def bdd_preprocess(args, full=False):
     lastframe_zip = _resolve_path(args.lastframe_zip, args.repo_root)
     if not lastframe_zip.exists():
@@ -594,6 +647,7 @@ def parse_args():
             "minikand_train",
             "metabears_minikandinsky",
             "minikand_representation_sweep",
+            "minikand_scoring_sweep",
             "bdd_preprocess_smoke",
             "bdd_train_smoke",
             "bdd_preprocess_full",
@@ -718,6 +772,16 @@ def parse_args():
         default=0.50,
     )
     parser.add_argument(
+        "--minikand-cross-fit-folds",
+        type=int,
+        default=5,
+    )
+    parser.add_argument(
+        "--minikand-shrinkage",
+        type=float,
+        default=0.10,
+    )
+    parser.add_argument(
         "--metabears-intervention",
         choices=[
             "none",
@@ -810,6 +874,7 @@ def main():
         "minikand_train": minikand_train,
         "metabears_minikandinsky": metabears_minikandinsky,
         "minikand_representation_sweep": minikand_representation_sweep,
+        "minikand_scoring_sweep": minikand_scoring_sweep,
         "bdd_preprocess_smoke": lambda parsed: bdd_preprocess(parsed, full=False),
         "bdd_train_smoke": lambda parsed: bdd_train(parsed, full=False),
         "bdd_preprocess_full": lambda parsed: bdd_preprocess(parsed, full=True),
