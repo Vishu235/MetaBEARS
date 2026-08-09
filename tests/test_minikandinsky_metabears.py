@@ -1,0 +1,145 @@
+"""Tests for the MiniKandinsky MetaBEARS adapter and controls."""
+
+import unittest
+
+import numpy as np
+
+from XOR_MNIST.metacog import collect_ensemble_predictions
+from XOR_MNIST.metacog.minikandinsky import (
+    MiniKandinskyModelAdapter,
+    MiniKandinskyTargetLoader,
+    align_cycled_minikandinsky_colors,
+    align_permuted_minikandinsky_concepts,
+    cycle_minikandinsky_palette,
+    desaturate_minikandinsky_palette,
+    permute_minikandinsky_figures,
+)
+
+
+def _categorical_probabilities(batch_size: int) -> np.ndarray:
+    probabilities = np.full((batch_size, 18, 3), 0.025, dtype=np.float64)
+    for sample in range(batch_size):
+        for concept in range(18):
+            probabilities[sample, concept, (sample + concept) % 3] = 0.95
+    return probabilities
+
+
+class FakeRawMiniKandinskyModel:
+    def __init__(self, member_index: int) -> None:
+        self.member_index = member_index
+        self.evaluation_mode = False
+
+    def eval(self) -> None:
+        self.evaluation_mode = True
+
+    def __call__(self, images: np.ndarray) -> dict:
+        batch_size = images.shape[0]
+        concepts = _categorical_probabilities(batch_size).reshape(
+            batch_size, 3, 18
+        )
+        labels = np.tile(np.array([0.1, 0.9]), (batch_size, 1))
+        representations = np.arange(
+            batch_size * 54, dtype=np.float64
+        ).reshape(batch_size, 3, 18)
+        return {"pCS": concepts, "YS": labels, "CS": representations}
+
+
+class MiniKandinskyAdapterTests(unittest.TestCase):
+    def test_model_and_target_adapters_feed_generic_collector(self) -> None:
+        labels = np.array([[2, 2, 2, 1], [0, 1, 2, 1]], dtype=np.int64)
+        concepts = np.arange(36, dtype=np.int64).reshape(2, 3, 6) % 3
+        loader = MiniKandinskyTargetLoader(
+            [(np.zeros((2, 3, 28, 252)), labels, concepts)]
+        )
+        raw_models = [
+            FakeRawMiniKandinskyModel(0),
+            FakeRawMiniKandinskyModel(1),
+        ]
+
+        collected = collect_ensemble_predictions(
+            [MiniKandinskyModelAdapter(model) for model in raw_models],
+            loader,
+        )
+
+        self.assertEqual(
+            collected.concept_member_probabilities.shape,
+            (2, 2, 18, 3),
+        )
+        self.assertEqual(collected.member_representations.shape, (2, 2, 54))
+        np.testing.assert_array_equal(collected.labels, np.array([1, 1]))
+        self.assertTrue(all(model.evaluation_mode for model in raw_models))
+
+    def test_model_adapter_rejects_non_categorical_feature_count(self) -> None:
+        class InvalidModel:
+            def __call__(self, images: np.ndarray) -> dict:
+                return {
+                    "pCS": np.zeros((1, 3, 17)),
+                    "YS": np.array([[0.5, 0.5]]),
+                    "CS": np.zeros((1, 3, 17)),
+                }
+
+        with self.assertRaisesRegex(ValueError, "groups of three"):
+            MiniKandinskyModelAdapter(InvalidModel())(
+                np.zeros((1, 3, 28, 252))
+            )
+
+
+class MiniKandinskyInterventionTests(unittest.TestCase):
+    def test_figure_permutation_and_alignment_are_inverse(self) -> None:
+        images = np.concatenate(
+            [
+                np.full((1, 3, 2, 4), figure, dtype=np.float32)
+                for figure in range(3)
+            ],
+            axis=-1,
+        )
+        permuted = permute_minikandinsky_figures(images)
+        self.assertTrue(np.all(permuted[..., :4] == 1))
+        self.assertTrue(np.all(permuted[..., 4:8] == 2))
+        self.assertTrue(np.all(permuted[..., 8:] == 0))
+
+        base = _categorical_probabilities(2)[np.newaxis, ...]
+        grouped = base.reshape(1, 2, 3, 6, 3)
+        transformed = grouped[:, :, [1, 2, 0], :, :].reshape(base.shape)
+
+        aligned = align_permuted_minikandinsky_concepts(transformed)
+
+        np.testing.assert_allclose(aligned, base)
+
+    def test_palette_cycle_changes_known_colors_and_alignment_is_inverse(self) -> None:
+        images = np.array(
+            [[[[1.0, 1.0, 0.0]], [[0.0, 1.0, 0.0]], [[0.0, 0.0, 1.0]]]],
+            dtype=np.float32,
+        )
+        cycled = cycle_minikandinsky_palette(images)
+        expected = np.array(
+            [[[[1.0, 0.0, 1.0]], [[1.0, 0.0, 0.0]], [[0.0, 1.0, 0.0]]]],
+            dtype=np.float32,
+        )
+        np.testing.assert_allclose(cycled, expected)
+
+        base = _categorical_probabilities(2)[np.newaxis, ...]
+        transformed = base.reshape(1, 2, 3, 6, 3).copy()
+        colors = transformed[:, :, :, 3:, :].copy()
+        transformed[:, :, :, 3:, :] = colors[..., [2, 0, 1]]
+        aligned = align_cycled_minikandinsky_colors(
+            transformed.reshape(base.shape)
+        )
+        np.testing.assert_allclose(aligned, base)
+
+    def test_desaturation_preserves_background_and_source_identity(self) -> None:
+        images = np.array(
+            [[[[1.0, 1.0, 0.0, 1.0]], [[0.0, 1.0, 0.0, 1.0]], [[0.0, 0.0, 1.0, 1.0]]]],
+            dtype=np.float32,
+        )
+
+        transformed = desaturate_minikandinsky_palette(images)
+
+        np.testing.assert_allclose(transformed[0, :, 0, 0], 0.35)
+        np.testing.assert_allclose(transformed[0, :, 0, 1], 0.70)
+        np.testing.assert_allclose(transformed[0, :, 0, 2], 0.15)
+        np.testing.assert_allclose(transformed[0, :, 0, 3], 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

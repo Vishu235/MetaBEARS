@@ -5,6 +5,7 @@ command-line entry points. Run it from the repository root, for example:
 
     python colab_runner.py --job halfmnist_smoke
     python colab_runner.py --job minikand_train --seed 0 --epochs 30
+    python colab_runner.py --job metabears_minikandinsky --minikand-checkpoints ...
     python colab_runner.py --job bdd_preprocess_smoke --lastframe-zip /content/drive/MyDrive/bears_data/lastframe.zip
 """
 
@@ -312,6 +313,49 @@ def minikand_train(args):
     _run_minikand(args, epochs=args.epochs, save_checkpoint=True)
 
 
+def metabears_minikandinsky(args):
+    ensure_kandinsky_data(args.repo_root)
+    if not args.minikand_checkpoints or len(args.minikand_checkpoints) < 2:
+        raise SystemExit(
+            "Pass at least two trained members with --minikand-checkpoints."
+        )
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = args.minikand_output_dir
+    if output_dir is None:
+        output_dir = (
+            args.repo_root
+            / "colab_outputs"
+            / "metabears_minikandinsky"
+            / timestamp
+        )
+    command = [
+        sys.executable,
+        "-m",
+        "metacog.minikandinsky_runner",
+        "--output-dir",
+        str(output_dir),
+        "--seed",
+        str(args.seed),
+        "--batch-size",
+        str(args.batch_size),
+        "--intervention",
+        args.minikand_intervention,
+        "--ood-transform",
+        args.minikand_ood_transform,
+        "--familiarity-validation-quantile",
+        str(args.familiarity_validation_quantile),
+        "--shortcut-fallback-quantile",
+        str(args.shortcut_fallback_quantile),
+        "--ece-bins",
+        str(args.ece_bins),
+        "--ensemble-checkpoints",
+        *args.minikand_checkpoints,
+    ]
+    if args.metabears_max_batches is not None:
+        command.extend(["--max-batches", str(args.metabears_max_batches)])
+    _run(command, args.repo_root / "XOR_MNIST")
+
+
 def bdd_preprocess(args, full=False):
     lastframe_zip = _resolve_path(args.lastframe_zip, args.repo_root)
     if not lastframe_zip.exists():
@@ -440,6 +484,7 @@ def parse_args():
             "metabears_halfmnist",
             "minikand_smoke",
             "minikand_train",
+            "metabears_minikandinsky",
             "bdd_preprocess_smoke",
             "bdd_train_smoke",
             "bdd_preprocess_full",
@@ -473,6 +518,27 @@ def parse_args():
     )
     parser.add_argument("--metabears-real-kl", action="store_true")
     parser.add_argument("--metabears-max-batches", type=int, default=None)
+    parser.add_argument(
+        "--minikand-checkpoints",
+        nargs="*",
+        default=None,
+        help="Explicit trained MiniKandinsky checkpoints for MetaBEARS.",
+    )
+    parser.add_argument(
+        "--minikand-output-dir",
+        default=None,
+        help="Optional MiniKandinsky MetaBEARS artifact directory.",
+    )
+    parser.add_argument(
+        "--minikand-intervention",
+        choices=["none", "figure_permute", "palette_cycle"],
+        default="figure_permute",
+    )
+    parser.add_argument(
+        "--minikand-ood-transform",
+        choices=["none", "palette_desaturate"],
+        default="palette_desaturate",
+    )
     parser.add_argument(
         "--metabears-intervention",
         choices=[
@@ -564,6 +630,7 @@ def main():
         "metabears_halfmnist": metabears_halfmnist,
         "minikand_smoke": minikand_smoke,
         "minikand_train": minikand_train,
+        "metabears_minikandinsky": metabears_minikandinsky,
         "bdd_preprocess_smoke": lambda parsed: bdd_preprocess(parsed, full=False),
         "bdd_train_smoke": lambda parsed: bdd_train(parsed, full=False),
         "bdd_preprocess_full": lambda parsed: bdd_preprocess(parsed, full=True),

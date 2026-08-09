@@ -10,13 +10,13 @@ MetaBEARS is the Phase II working repository for extending the BEARS neuro-symbo
 
 Review is the union of two independently triggered paths: a `shortcut_flag` (shortcut risk over a validation-selected threshold) and an `ood_flag` (familiarity at or below a validation-selected threshold). Both are reported alongside `review_flag` so a consumer can tell which evidence triggered review. The separation is structural, not a guarantee that the two flags identify distinct real-world causes.
 
-The proposed novelty combines a **concept consistency probe** with a **meta-cognitive confidence layer**. The framework-independent prototype now includes an adapter for real BEARS ensemble outputs; execution on trained checkpoints and benchmark validation are still in progress.
+The proposed novelty combines a **concept consistency probe** with a **meta-cognitive confidence layer**. The implementation includes member-preserving adapters for HalfMNIST and MiniKandinsky, validation-only threshold calibration, controlled interventions, and serialized per-sample diagnostics.
 
 ## Current status
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
 - Phase II HalfMNIST: frozen — the v4 leave-one-intervention-out study and v5 half-swap negative control are complete across seeds 0, 10, and 20.
-- Phase II extension: in progress — MiniKandinsky is the next controlled generalisation benchmark, followed by the BDD-OIA practical real-world reconstruction.
+- Phase II extension: in progress — the three-seed MiniKandinsky baseline is trained and its MetaBEARS evaluation workflow is implemented; controlled results remain to be executed and frozen before proceeding to BDD-OIA.
 
 ## Repository layout
 
@@ -37,19 +37,19 @@ MetaBEARS/
 Use separate notebooks because MiniKandinsky and BDD-OIA have different data
 layouts, entry points, and persistence requirements:
 
-- `colab/MetaBEARS_MiniKandinsky.ipynb` stages `kand-3k.zip`, runs a one-epoch
-  smoke test, and optionally trains reproducible checkpoints for seeds 0, 10,
-  and 20.
+- `colab/MetaBEARS_MiniKandinsky.ipynb` stages `kand-3k.zip`, trains or reuses
+  checkpoints for seeds 0, 10, and 20, and runs the checkpoint ensemble through
+  structural, semantic, and OOD MetaBEARS controls.
 - `colab/MetaBEARS_BDD_OIA.ipynb` validates `lastframe.zip`, runs an isolated
   smoke workflow, optionally creates reusable ResNet50 features, and trains
   uniquely named multi-seed BDD variants without overwriting prior runs.
 
-The MiniKandinsky notebook establishes the baseline required for the next
-MetaBEARS adapter. The BDD notebook is a practical reconstruction based on
-ResNet50 ImageNet features; it is not the exact paper setup that used the
-unavailable Faster-RCNN/CBM-AUC feature archive. Neither baseline should be
-reported as a MetaBEARS shortcut-detection result until the dataset-specific
-member-preserving adapter and interventions are implemented.
+The MiniKandinsky adapter regroups the legacy model output into 18 categorical
+concepts and selects the final binary task target. Its controls include cyclic
+figure permutation, global palette cycling with color-class realignment, and a
+deterministic desaturated-palette OOD split. The BDD notebook remains a
+practical reconstruction based on ResNet50 ImageNet features; it is not the
+exact paper setup that used the unavailable Faster-RCNN/CBM-AUC feature archive.
 
 ## Quick start
 
@@ -68,6 +68,12 @@ Inspect the available reproducible jobs:
 python colab_runner.py --help
 python colab_runner.py --job diagnostics
 python colab_runner.py --job metabears_demo
+```
+
+Evaluate an existing MiniKandinsky ensemble:
+
+```powershell
+python colab_runner.py --job metabears_minikandinsky --minikand-checkpoints <seed-0.pt> <seed-10.pt> <seed-20.pt> --minikand-intervention figure_permute --minikand-ood-transform palette_desaturate
 ```
 
 Run MetaBEARS with existing HalfMNIST ensemble checkpoints:

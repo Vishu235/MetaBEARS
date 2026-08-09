@@ -269,10 +269,10 @@ def calibrate_metabears(
     positives and negatives, a clearly reported upper-quantile fallback is
     used instead of pretending that supervised threshold selection succeeded.
 
-    Familiarity has no labelled OOD validation samples in HalfMNIST. Its
-    threshold is therefore the requested lower quantile of leave-one-out ID
-    validation familiarity. The observed validation review rate is retained
-    because ties can make it differ slightly from the requested quantile.
+    Familiarity has no labelled OOD calibration samples. Its threshold is
+    therefore the requested lower quantile of leave-one-out ID validation
+    familiarity. The observed validation review rate is retained because ties
+    can make it differ slightly from the requested quantile.
     """
 
     familiarity_quantile = _unit_interval(
@@ -973,8 +973,8 @@ def run_metabears_experiment(
             ),
             (
                 "Familiarity calibration uses only the lower tail of ID "
-                "validation familiarity because HalfMNIST has no OOD "
-                "validation split."
+                "validation familiarity; no labelled OOD samples are used "
+                "to select its threshold."
             ),
             (
                 "The controlled intervention supplies behavioral failure "
