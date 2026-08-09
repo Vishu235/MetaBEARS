@@ -15,9 +15,8 @@ The proposed novelty combines a **concept consistency probe** with a **meta-cogn
 ## Current status
 
 - Phase I: complete — environment restoration, baseline reproduction, diagnostics, HalfMNIST/BEARS evaluation support, MiniKandinsky smoke testing, and a practical BDD-OIA reconstruction.
-- Phase II: in progress — concept consistency, member-preserving BEARS output collection, representation-distance computation, validation-only threshold calibration, held-out ID/OOD evaluation, separated confidence reporting, serialization, and deterministic integration checks are implemented. The real HalfMNIST runner can load saved members or train a fresh ensemble.
-
-Phase II will proceed from baseline equivalence to the consistency probe, the three-signal confidence report, and controlled shortcut-detection experiments.
+- Phase II HalfMNIST: frozen — the v4 leave-one-intervention-out study and v5 half-swap negative control are complete across seeds 0, 10, and 20.
+- Phase II extension: in progress — MiniKandinsky is the next controlled generalisation benchmark, followed by the BDD-OIA practical real-world reconstruction.
 
 ## Repository layout
 
@@ -32,6 +31,25 @@ MetaBEARS/
 |-- colab_runner.py            # Reproducible experiment/smoke-test entry point
 `-- requirements*.txt          # Runtime, Colab, and development dependencies
 ```
+
+## Next-dataset Colab notebooks
+
+Use separate notebooks because MiniKandinsky and BDD-OIA have different data
+layouts, entry points, and persistence requirements:
+
+- `colab/MetaBEARS_MiniKandinsky.ipynb` stages `kand-3k.zip`, runs a one-epoch
+  smoke test, and optionally trains reproducible checkpoints for seeds 0, 10,
+  and 20.
+- `colab/MetaBEARS_BDD_OIA.ipynb` validates `lastframe.zip`, runs an isolated
+  smoke workflow, optionally creates reusable ResNet50 features, and trains
+  uniquely named multi-seed BDD variants without overwriting prior runs.
+
+The MiniKandinsky notebook establishes the baseline required for the next
+MetaBEARS adapter. The BDD notebook is a practical reconstruction based on
+ResNet50 ImageNet features; it is not the exact paper setup that used the
+unavailable Faster-RCNN/CBM-AUC feature archive. Neither baseline should be
+reported as a MetaBEARS shortcut-detection result until the dataset-specific
+member-preserving adapter and interventions are implemented.
 
 ## Quick start
 

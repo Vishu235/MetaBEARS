@@ -4,6 +4,7 @@ This module keeps the Colab notebook small while preserving the repo's normal
 command-line entry points. Run it from the repository root, for example:
 
     python colab_runner.py --job halfmnist_smoke
+    python colab_runner.py --job minikand_train --seed 0 --epochs 30
     python colab_runner.py --job bdd_preprocess_smoke --lastframe-zip /content/drive/MyDrive/bears_data/lastframe.zip
 """
 
@@ -275,30 +276,40 @@ def metabears_halfmnist(args):
     _run(command, args.repo_root / "XOR_MNIST")
 
 
-def minikand_smoke(args):
+def _run_minikand(args, *, epochs, save_checkpoint):
     ensure_kandinsky_data(args.repo_root)
-    _run(
-        [
-            sys.executable,
-            "main.py",
-            "--model",
-            "minikanddpl",
-            "--dataset",
-            "minikandinsky",
-            "--task",
-            "mini_patterns_bombazza",
-            "--n_epochs",
-            str(args.epochs),
-            "--batch_size",
-            str(args.batch_size),
-            "--c_sup",
-            "1",
-            "--w_c",
-            "10",
-            "--non_verbose",
-        ],
-        args.repo_root / "XOR_MNIST",
-    )
+    command = [
+        sys.executable,
+        "main.py",
+        "--model",
+        "minikanddpl",
+        "--dataset",
+        "minikandinsky",
+        "--task",
+        "mini_patterns_bombazza",
+        "--n_epochs",
+        str(epochs),
+        "--batch_size",
+        str(args.batch_size),
+        "--seed",
+        str(args.seed),
+        "--c_sup",
+        "1",
+        "--w_c",
+        "10",
+        "--non_verbose",
+    ]
+    if save_checkpoint:
+        command.append("--checkout")
+    _run(command, args.repo_root / "XOR_MNIST")
+
+
+def minikand_smoke(args):
+    _run_minikand(args, epochs=min(args.epochs, 1), save_checkpoint=False)
+
+
+def minikand_train(args):
+    _run_minikand(args, epochs=args.epochs, save_checkpoint=True)
 
 
 def bdd_preprocess(args, full=False):
@@ -428,6 +439,7 @@ def parse_args():
             "metabears_demo",
             "metabears_halfmnist",
             "minikand_smoke",
+            "minikand_train",
             "bdd_preprocess_smoke",
             "bdd_train_smoke",
             "bdd_preprocess_full",
@@ -551,6 +563,7 @@ def main():
         "metabears_demo": metabears_demo,
         "metabears_halfmnist": metabears_halfmnist,
         "minikand_smoke": minikand_smoke,
+        "minikand_train": minikand_train,
         "bdd_preprocess_smoke": lambda parsed: bdd_preprocess(parsed, full=False),
         "bdd_train_smoke": lambda parsed: bdd_train(parsed, full=False),
         "bdd_preprocess_full": lambda parsed: bdd_preprocess(parsed, full=True),
