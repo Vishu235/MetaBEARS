@@ -59,27 +59,30 @@ class BDDDataset(Dataset):
         self.image_dir = image_dir
         self.n_class_attr = n_class_attr
 
+        # Preload every sample's precomputed tensors once here instead of
+        # re-reading three small files per sample from disk on every
+        # __getitem__ call, every epoch. This dataset is built once before
+        # the epoch loop and reused for all epochs, so without caching a
+        # 30-epoch run repeats the same ~3N disk reads 30 times over. The
+        # full feature set is a few hundred MB at most, so caching it in
+        # memory is cheap.
+        self._cache = []
+        for img_data in self.data:
+            t_path = img_data["img_path"][:-4] + ".pt"
+            img = torch.load(self.image_dir + "/inputs/" + t_path).squeeze(0)
+            class_label = torch.load(
+                self.image_dir + "/labels/" + t_path
+            ).squeeze(0)
+            attr_label = torch.load(
+                self.image_dir + "/concepts/" + t_path
+            ).squeeze(0)
+            self._cache.append((img, class_label, attr_label))
+
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_data = self.data[idx]
-        img_path = img_data["img_path"]
-
-        # print(img_path)
-        # print(self.image_dir)
-
-        t_path = img_path[:-4] + ".pt"
-        img_path = self.image_dir + "/inputs/" + t_path
-        lab_path = self.image_dir + "/labels/" + t_path
-        con_path = self.image_dir + "/concepts/" + t_path
-        # print(img_path)
-
-        img = torch.load(img_path).squeeze(0)
-        class_label = torch.load(lab_path).squeeze(0)
-        attr_label = torch.load(con_path).squeeze(0)
-
-        return img, class_label, attr_label
+        return self._cache[idx]
 
         # print(img.size())
 

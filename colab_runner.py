@@ -46,6 +46,13 @@ def _run(command, cwd):
 
     with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
         log_file.write(f"[{cwd}]$ {command_text}\n\n")
+        # Force the child Python process to be unbuffered. Without this,
+        # print() in a subprocess whose stdout is a pipe (not a TTY) is
+        # block-buffered by default, so nothing appears here until the
+        # child's internal buffer fills or the process exits — a long
+        # training run can look completely silent for a long time even
+        # while it is actively progressing.
+        child_env = dict(os.environ, PYTHONUNBUFFERED="1")
         process = subprocess.Popen(
             command,
             cwd=str(cwd),
@@ -54,6 +61,7 @@ def _run(command, cwd):
             text=True,
             bufsize=1,
             errors="replace",
+            env=child_env,
         )
         assert process.stdout is not None
         for line in process.stdout:
