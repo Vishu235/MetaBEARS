@@ -15,6 +15,7 @@ from pathlib import Path
 
 import torch
 from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 
 
 SPLITS = ("train", "val", "test")
@@ -116,42 +117,68 @@ def _build_resnet50_extractor(weights_name, device):
     return model, transform
 
 
-def _extract_features(archive, image_names, feature_dir, weights_name, batch_size):
+class _ZipImageDataset(Dataset):
+    """Decodes one image per call so DataLoader workers can parallelize the
+    CPU-bound zip read / PIL decode / transform work across processes while
+    the main process keeps the GPU fed with batched forward passes. Without
+    this, feature extraction is a fully serial CPU loop that leaves the GPU
+    idle almost the entire time.
+    """
+
+    def __init__(self, zip_path, image_names, transform):
+        self.zip_path = str(zip_path)
+        self.image_names = image_names
+        self.transform = transform
+        self._archive = None
+
+    def __len__(self):
+        return len(self.image_names)
+
+    def __getitem__(self, index):
+        if self._archive is None:
+            # A zipfile.ZipFile handle cannot be safely shared across
+            # process boundaries, so each worker process opens its own.
+            self._archive = zipfile.ZipFile(self.zip_path)
+        image_name = self.image_names[index]
+        with self._archive.open(f"data/{image_name}") as image_file:
+            image = Image.open(image_file).convert("RGB")
+            tensor = self.transform(image)
+        return tensor, Path(image_name).stem
+
+
+def _extract_features(
+    zip_path, image_names, feature_dir, weights_name, batch_size, num_workers
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, transform = _build_resnet50_extractor(weights_name, device)
 
-    batch = []
-    stems = []
+    dataset = _ZipImageDataset(zip_path, image_names, transform)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=(device.type == "cuda"),
+    )
+
     with torch.no_grad():
-        for image_name in image_names:
-            with archive.open(f"data/{image_name}") as image_file:
-                image = Image.open(image_file).convert("RGB")
-                batch.append(transform(image))
-                stems.append(Path(image_name).stem)
-
-            if len(batch) == batch_size:
-                _save_feature_batch(model, batch, stems, feature_dir, device)
-                batch, stems = [], []
-
-        if batch:
-            _save_feature_batch(model, batch, stems, feature_dir, device)
-
-
-def _save_feature_batch(model, batch, stems, feature_dir, device):
-    images = torch.stack(batch).to(device)
-    features = model(images).flatten(1).cpu()
-    for stem, feature in zip(stems, features):
-        torch.save(feature.unsqueeze(0), feature_dir / f"{stem}.pt")
+        for images, stems in loader:
+            images = images.to(device, non_blocking=True)
+            features = model(images).flatten(1).cpu()
+            for stem, feature in zip(stems, features):
+                torch.save(feature.unsqueeze(0), feature_dir / f"{stem}.pt")
 
 
 def _write_split(
     archive,
+    zip_path,
     split,
     output_dir,
     materialize_images,
     feature_mode,
     feature_weights,
     feature_batch_size,
+    feature_workers,
     limit,
 ):
     actions = _read_json(archive, f"{split}_25k_images_actions.json")
@@ -204,11 +231,12 @@ def _write_split(
 
     if feature_mode == "resnet50":
         _extract_features(
-            archive,
+            zip_path,
             image_names,
             split_dir / "inputs",
             feature_weights,
             feature_batch_size,
+            feature_workers,
         )
 
     return {
@@ -299,6 +327,13 @@ def parse_args():
         default=32,
         help="Batch size for feature extraction.",
     )
+    parser.add_argument(
+        "--feature-workers",
+        type=int,
+        default=4,
+        help="DataLoader worker processes for parallel image decode, "
+        "so the GPU stays fed instead of idling on CPU-bound decode.",
+    )
     return parser.parse_args()
 
 
@@ -314,12 +349,14 @@ def main():
         for split in SPLITS:
             summary = _write_split(
                 archive=archive,
+                zip_path=zip_path,
                 split=split,
                 output_dir=output_dir,
                 materialize_images=args.materialize_images,
                 feature_mode=args.feature_mode,
                 feature_weights=args.feature_weights,
                 feature_batch_size=args.feature_batch_size,
+                feature_workers=args.feature_workers,
                 limit=args.limit_per_split,
             )
             summaries.append(summary)

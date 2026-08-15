@@ -559,6 +559,8 @@ def bdd_preprocess(args, full=False):
         args.feature_weights,
         "--feature-batch-size",
         str(args.feature_batch_size),
+        "--feature-workers",
+        str(args.feature_workers),
     ]
     if not full:
         command.extend(["--limit-per-split", str(args.limit_per_split)])
@@ -845,6 +847,12 @@ def parse_args():
         help="Use 'none' for very fast BDD smoke tests; use 'imagenet' for practical runs.",
     )
     parser.add_argument("--feature-batch-size", type=int, default=64)
+    parser.add_argument(
+        "--feature-workers",
+        type=int,
+        default=4,
+        help="DataLoader worker processes for parallel BDD feature extraction.",
+    )
     parser.add_argument("--bdd-model-name", default="dpl_auc")
     parser.add_argument(
         "--h-labeled-param",
