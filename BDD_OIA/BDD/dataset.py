@@ -14,6 +14,21 @@ from PIL import Image
 from torch.utils.data import BatchSampler, DataLoader, Dataset
 
 
+# Shared across every BDDDataset instance in this process. main_bdd.py builds
+# two independent datasets over the identical training split (train_loader
+# and train_loader_no_shuffle), so per-instance caching would hold the full
+# training set in memory twice. Keying by file path lets both share one copy.
+_TENSOR_CACHE = {}
+
+
+def _load_cached_tensor(path):
+    tensor = _TENSOR_CACHE.get(path)
+    if tensor is None:
+        tensor = torch.load(path).squeeze(0)
+        _TENSOR_CACHE[path] = tensor
+    return tensor
+
+
 class BDDDataset(Dataset):
     """
     Returns a compatible Torch Dataset object customized for the BDD dataset
@@ -69,13 +84,13 @@ class BDDDataset(Dataset):
         self._cache = []
         for img_data in self.data:
             t_path = img_data["img_path"][:-4] + ".pt"
-            img = torch.load(self.image_dir + "/inputs/" + t_path).squeeze(0)
-            class_label = torch.load(
+            img = _load_cached_tensor(self.image_dir + "/inputs/" + t_path)
+            class_label = _load_cached_tensor(
                 self.image_dir + "/labels/" + t_path
-            ).squeeze(0)
-            attr_label = torch.load(
+            )
+            attr_label = _load_cached_tensor(
                 self.image_dir + "/concepts/" + t_path
-            ).squeeze(0)
+            )
             self._cache.append((img, class_label, attr_label))
 
     def __len__(self):

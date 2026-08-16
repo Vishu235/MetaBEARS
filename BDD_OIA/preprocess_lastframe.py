@@ -166,7 +166,16 @@ def _extract_features(
             images = images.to(device, non_blocking=True)
             features = model(images).flatten(1).cpu()
             for stem, feature in zip(stems, features):
-                torch.save(feature.unsqueeze(0), feature_dir / f"{stem}.pt")
+                # feature is a view into the batch tensor's shared storage.
+                # torch.save on a view serializes the ENTIRE storage it was
+                # sliced from, not just this row, so every saved file would
+                # otherwise silently balloon to roughly batch_size times its
+                # correct size. .clone() breaks the storage sharing so only
+                # this sample's 2048 floats get written.
+                torch.save(
+                    feature.clone().unsqueeze(0),
+                    feature_dir / f"{stem}.pt",
+                )
 
 
 def _write_split(
