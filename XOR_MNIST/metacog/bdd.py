@@ -151,6 +151,16 @@ class BDDModelAdapter:
         batch_size = int(pred.shape[0])
         concept_probabilities = pair_probabilities.reshape(batch_size, -1, 2)
         action_pairs = pred.reshape(batch_size, len(ACTION_NAMES), 2)
+        # DPL_AUC's final smoothing step ((pred + 1e-5) / (1 + 2e-5)) is a
+        # global additive adjustment, not a guarantee that each individual
+        # action pair sums to exactly 1 — the ProbLog world-query reduction
+        # each pair comes from accumulates its own tiny floating-point drift.
+        # _combine_action_pairs multiplies four such pairs together, which
+        # compounds that drift enough to fail the downstream strict
+        # sums-to-one check even when each input pair was already very close
+        # to normalized. Renormalize per pair first to remove that risk.
+        pair_sums = action_pairs.sum(dim=-1, keepdim=True)
+        action_pairs = action_pairs / pair_sums
         action_combination = _combine_action_pairs(action_pairs)
 
         return {

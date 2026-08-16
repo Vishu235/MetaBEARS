@@ -123,6 +123,43 @@ class BDDModelAdapterTests(unittest.TestCase):
         )
         torch.testing.assert_close(action_totals, torch.ones_like(action_totals))
 
+    def test_adapter_renormalizes_action_pairs_with_floating_point_drift(
+        self,
+    ) -> None:
+        """Regression test: DPL_AUC's global smoothing does not guarantee
+        each action pair sums to exactly 1; the adapter must renormalize
+        per pair before combining, or the compounded product can fail the
+        downstream strict sums-to-one check (see metacog.integration).
+        """
+
+        class DriftingModel:
+            def __call__(self, images: torch.Tensor) -> torch.Tensor:
+                batch_size = images.shape[0]
+                concept_positive = torch.full(
+                    (batch_size, 21), 0.5, dtype=torch.float64
+                )
+                self.pC = torch.stack(
+                    [1.0 - concept_positive, concept_positive], dim=-1
+                ).reshape(batch_size, 42)
+                self.concepts_labeled = concept_positive.reshape(
+                    batch_size, 21, 1
+                )
+                # Each pair is off by a small independent drift, mimicking
+                # accumulated floating-point error from the ProbLog world
+                # reduction rather than an exact complementary pair.
+                base = torch.tensor(
+                    [0.5, 0.500011, 0.5, 0.499988], dtype=torch.float64
+                )
+                pairs = torch.stack([base, 1.0 - base + 2e-5], dim=-1)
+                return pairs.reshape(1, 8).repeat(batch_size, 1)
+
+        adapter = BDDModelAdapter(DriftingModel())
+        outputs = adapter(torch.zeros((3, 2048)))
+        totals = outputs["YS"].sum(dim=-1)
+        torch.testing.assert_close(
+            totals, torch.ones_like(totals), atol=1e-10, rtol=1e-10
+        )
+
     def test_adapter_requires_pC_attribute(self) -> None:
         class BrokenModel:
             def __call__(self, images: torch.Tensor) -> torch.Tensor:

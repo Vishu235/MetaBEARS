@@ -92,6 +92,9 @@ class BddOiaNotebookTests(unittest.TestCase):
                         "Full multi-seed BDD-OIA baseline training",
                         "Build a compact BDD result summary",
                         "Archive repository-side outputs to Drive",
+                        "Pull latest MetaBEARS code",
+                        "Locate BDD-OIA MetaBEARS checkpoint ensemble",
+                        "Run BDD-OIA MetaBEARS evaluation",
                     ),
                     start=1,
                 )
