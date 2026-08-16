@@ -95,6 +95,10 @@ class BddOiaNotebookTests(unittest.TestCase):
                         "Pull latest MetaBEARS code",
                         "Locate BDD-OIA MetaBEARS checkpoint ensemble",
                         "Run BDD-OIA MetaBEARS evaluation",
+                        "Generate BDD-OIA compositional OOD split",
+                        "Run BDD-OIA MetaBEARS compositional-OOD evaluation",
+                        "Freeze BDD-OIA MetaBEARS baseline (v1)",
+                        "Freeze BDD-OIA MetaBEARS compositional-OOD evaluation (v2)",
                     ),
                     start=1,
                 )

@@ -454,9 +454,69 @@ def metabears_bdd(args):
         "--ensemble-checkpoints",
         *args.bdd_metabears_checkpoints,
     ]
+    if args.bdd_metabears_compositional_ood:
+        command.append("--compositional-ood")
     if args.metabears_max_batches is not None:
         command.extend(["--max-batches", str(args.metabears_max_batches)])
     _run(command, args.repo_root / "XOR_MNIST")
+
+
+def bdd_ood_split(args):
+    if not args.bdd_metabears_data_dir:
+        raise SystemExit(
+            "Pass the preprocessed feature directory with --bdd-metabears-data-dir."
+        )
+    command = [
+        sys.executable,
+        "-m",
+        "metacog.bdd_ood",
+        "--bdd-data-dir",
+        args.bdd_metabears_data_dir,
+        "--max-fraction",
+        str(args.bdd_ood_max_fraction),
+    ]
+    if args.bdd_ood_output_summary:
+        command.extend(["--output-summary", args.bdd_ood_output_summary])
+    _run(command, args.repo_root / "XOR_MNIST")
+
+
+def bdd_freeze(args):
+    for name, value in (
+        ("--bdd-freeze-results-root", args.bdd_freeze_results_root),
+        ("--bdd-freeze-id", args.bdd_freeze_id),
+        ("--bdd-freeze-scope", args.bdd_freeze_scope),
+        ("--bdd-freeze-output", args.bdd_freeze_output),
+    ):
+        if not value:
+            raise SystemExit(f"Pass {name}.")
+
+    results_root = Path(args.bdd_freeze_results_root)
+    variant_dirs = {
+        "base": results_root / "dpl_auc",
+        "entropy": results_root / "dpl_auc_entropy",
+        "csup": results_root / "dpl_auc_csup",
+    }
+    command = [
+        sys.executable,
+        "bdd_freeze.py",
+        "--freeze-id",
+        args.bdd_freeze_id,
+        "--scope",
+        args.bdd_freeze_scope,
+        "--output",
+        args.bdd_freeze_output,
+    ]
+    found_any = False
+    for name, directory in variant_dirs.items():
+        if (directory / "run_summary.json").is_file():
+            command.extend(["--variant", name, str(directory)])
+            found_any = True
+    if not found_any:
+        raise SystemExit(
+            f"No run_summary.json found under dpl_auc/dpl_auc_entropy/dpl_auc_csup "
+            f"in {results_root}."
+        )
+    _run(command, args.repo_root)
 
 
 def minikand_representation_sweep(args):
@@ -710,6 +770,8 @@ def parse_args():
             "metabears_demo",
             "metabears_halfmnist",
             "metabears_bdd",
+            "bdd_ood_split",
+            "bdd_freeze",
             "minikand_smoke",
             "minikand_train",
             "metabears_minikandinsky",
@@ -776,6 +838,52 @@ def parse_args():
         type=int,
         default=64,
         help="Evaluation batch size for the BDD-OIA MetaBEARS run.",
+    )
+    parser.add_argument(
+        "--bdd-metabears-compositional-ood",
+        action="store_true",
+        help=(
+            "Evaluate the frozen compositional OOD split instead of the "
+            "plain val/test splits. Generate the split first with the "
+            "bdd_ood_split job."
+        ),
+    )
+    parser.add_argument(
+        "--bdd-ood-max-fraction",
+        type=float,
+        default=0.1,
+        help=(
+            "Maximum cumulative fraction of training samples the frozen "
+            "rare combined-action set may cover (bdd_ood_split job)."
+        ),
+    )
+    parser.add_argument(
+        "--bdd-ood-output-summary",
+        default=None,
+        help="Optional JSON summary path for the bdd_ood_split job.",
+    )
+    parser.add_argument(
+        "--bdd-freeze-results-root",
+        default=None,
+        help=(
+            "Directory containing dpl_auc/, dpl_auc_entropy/, dpl_auc_csup/ "
+            "MetaBEARS output subdirectories to freeze (bdd_freeze job)."
+        ),
+    )
+    parser.add_argument(
+        "--bdd-freeze-id",
+        default=None,
+        help="Identifier for this BDD-OIA freeze (bdd_freeze job).",
+    )
+    parser.add_argument(
+        "--bdd-freeze-scope",
+        default=None,
+        help="One-sentence description of what this freeze covers (bdd_freeze job).",
+    )
+    parser.add_argument(
+        "--bdd-freeze-output",
+        default=None,
+        help="Output path for the freeze manifest JSON (bdd_freeze job).",
     )
     parser.add_argument(
         "--minikand-checkpoints",
@@ -973,6 +1081,8 @@ def main():
         "metabears_demo": metabears_demo,
         "metabears_halfmnist": metabears_halfmnist,
         "metabears_bdd": metabears_bdd,
+        "bdd_ood_split": bdd_ood_split,
+        "bdd_freeze": bdd_freeze,
         "minikand_smoke": minikand_smoke,
         "minikand_train": minikand_train,
         "metabears_minikandinsky": metabears_minikandinsky,

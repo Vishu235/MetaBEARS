@@ -119,6 +119,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional JSON cache for dataset and checkpoint SHA-256 values.",
     )
+    parser.add_argument(
+        "--compositional-ood",
+        action="store_true",
+        help=(
+            "Use the frozen compositional OOD split (metacog.bdd_ood) instead "
+            "of the plain val/test splits: <split>_id_BDD_OIA.pkl for ID "
+            "validation/test and <split>_ood_BDD_OIA.pkl for OOD "
+            "validation/test. Generate these first with "
+            "'python -m metacog.bdd_ood'."
+        ),
+    )
     return parser
 
 
@@ -210,6 +221,17 @@ def _configuration(
         "dataset": "bdd_oia",
         "model": "dpl_auc",
         "bdd_data_dir": args.bdd_data_dir,
+        "compositional_ood": args.compositional_ood,
+        "ood_definition": (
+            (
+                "Validation/test samples whose combined 16-way action index "
+                "falls in the training set's frozen rare-combination set "
+                "(metacog.bdd_ood); rarity is fixed from training-split "
+                "frequency alone, never from evaluation results."
+            )
+            if args.compositional_ood
+            else None
+        ),
         "seed": args.seed,
         "ensemble_members": len(checkpoint_paths),
         "ensemble_source": "checkpoints",
@@ -243,10 +265,21 @@ def _collect_provenance(
     bdd_data_dir: Path,
     checkpoint_paths: Sequence[Path],
     provenance_cache: Optional[str],
+    *,
+    compositional_ood: bool = False,
 ) -> dict:
-    dataset_paths = [
-        bdd_data_dir / f"{split}_BDD_OIA.pkl" for split in ("train", "val", "test")
-    ]
+    if compositional_ood:
+        dataset_paths = [
+            bdd_data_dir / f"{split}_{suffix}_BDD_OIA.pkl"
+            for split in ("val", "test")
+            for suffix in ("id", "ood")
+        ]
+        dataset_paths.append(bdd_data_dir / "train_BDD_OIA.pkl")
+    else:
+        dataset_paths = [
+            bdd_data_dir / f"{split}_BDD_OIA.pkl"
+            for split in ("train", "val", "test")
+        ]
     return collect_run_provenance(
         _xor_root().parent,
         protocol=None,
@@ -301,30 +334,38 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     image_dir = str(bdd_data_dir) + "/"
-    validation_loader = BDDTargetLoader(
-        load_data(
-            [str(bdd_data_dir / "val_BDD_OIA.pkl")],
-            True,
-            False,
-            args.batch_size,
-            uncertain_label=False,
-            n_class_attr=2,
-            image_dir=image_dir + "val",
-            resampling=False,
+
+    def _loader(pkl_name: str, split_image_dir: str):
+        pkl_path = bdd_data_dir / pkl_name
+        if not pkl_path.is_file():
+            parser.error(
+                f"Missing {pkl_path}. Generate it first with "
+                "'python -m metacog.bdd_ood --bdd-data-dir "
+                f"{bdd_data_dir}'."
+            )
+        return BDDTargetLoader(
+            load_data(
+                [str(pkl_path)],
+                True,
+                False,
+                args.batch_size,
+                uncertain_label=False,
+                n_class_attr=2,
+                image_dir=split_image_dir,
+                resampling=False,
+            )
         )
-    )
-    id_test_loader = BDDTargetLoader(
-        load_data(
-            [str(bdd_data_dir / "test_BDD_OIA.pkl")],
-            True,
-            False,
-            args.batch_size,
-            uncertain_label=False,
-            n_class_attr=2,
-            image_dir=image_dir + "test",
-            resampling=False,
-        )
-    )
+
+    ood_validation_loader = None
+    ood_test_loader = None
+    if args.compositional_ood:
+        validation_loader = _loader("val_id_BDD_OIA.pkl", image_dir + "val")
+        id_test_loader = _loader("test_id_BDD_OIA.pkl", image_dir + "test")
+        ood_validation_loader = _loader("val_ood_BDD_OIA.pkl", image_dir + "val")
+        ood_test_loader = _loader("test_ood_BDD_OIA.pkl", image_dir + "test")
+    else:
+        validation_loader = _loader("val_BDD_OIA.pkl", image_dir + "val")
+        id_test_loader = _loader("test_BDD_OIA.pkl", image_dir + "test")
 
     ensemble = load_ensemble(args, checkpoint_paths, device)
     output_directory = (
@@ -335,13 +376,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     command_arguments = sys.argv[1:] if argv is None else list(argv)
     configuration = _configuration(args, checkpoint_paths, command_arguments)
     provenance = _collect_provenance(
-        bdd_data_dir, checkpoint_paths, args.provenance_cache
+        bdd_data_dir,
+        checkpoint_paths,
+        args.provenance_cache,
+        compositional_ood=args.compositional_ood,
     )
 
     result = run_metabears_experiment(
         ensemble,
         validation_loader,
         id_test_loader,
+        ood_validation_loader=ood_validation_loader,
+        ood_test_loader=ood_test_loader,
         output_directory=output_directory,
         familiarity_validation_quantile=args.familiarity_validation_quantile,
         shortcut_fallback_quantile=args.shortcut_fallback_quantile,
