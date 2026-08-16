@@ -419,6 +419,46 @@ def metabears_minikandinsky(args):
     _run(command, args.repo_root / "XOR_MNIST")
 
 
+def metabears_bdd(args):
+    if not args.bdd_metabears_data_dir:
+        raise SystemExit("Pass the preprocessed feature directory with --bdd-metabears-data-dir.")
+    if not args.bdd_metabears_checkpoints or len(args.bdd_metabears_checkpoints) < 2:
+        raise SystemExit(
+            "Pass at least two same-variant checkpoints with "
+            "--bdd-metabears-checkpoints."
+        )
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_dir = args.bdd_metabears_output_dir
+    if output_dir is None:
+        output_dir = (
+            args.repo_root / "colab_outputs" / "metabears_bdd" / timestamp
+        )
+    command = [
+        sys.executable,
+        "-m",
+        "metacog.bdd_runner",
+        "--bdd-data-dir",
+        args.bdd_metabears_data_dir,
+        "--output-dir",
+        str(output_dir),
+        "--seed",
+        str(args.seed),
+        "--batch-size",
+        str(args.bdd_metabears_batch_size),
+        "--familiarity-validation-quantile",
+        str(args.familiarity_validation_quantile),
+        "--shortcut-fallback-quantile",
+        str(args.shortcut_fallback_quantile),
+        "--ece-bins",
+        str(args.ece_bins),
+        "--ensemble-checkpoints",
+        *args.bdd_metabears_checkpoints,
+    ]
+    if args.metabears_max_batches is not None:
+        command.extend(["--max-batches", str(args.metabears_max_batches)])
+    _run(command, args.repo_root / "XOR_MNIST")
+
+
 def minikand_representation_sweep(args):
     ensure_kandinsky_data(args.repo_root)
     if not args.minikand_checkpoints or len(args.minikand_checkpoints) < 2:
@@ -669,6 +709,7 @@ def parse_args():
             "halfmnist_eval",
             "metabears_demo",
             "metabears_halfmnist",
+            "metabears_bdd",
             "minikand_smoke",
             "minikand_train",
             "metabears_minikandinsky",
@@ -708,6 +749,34 @@ def parse_args():
     )
     parser.add_argument("--metabears-real-kl", action="store_true")
     parser.add_argument("--metabears-max-batches", type=int, default=None)
+    parser.add_argument(
+        "--bdd-metabears-data-dir",
+        default=None,
+        help=(
+            "Preprocessed BDD-OIA feature directory (e.g. "
+            "data/bdd2048_resnet); required for metabears_bdd."
+        ),
+    )
+    parser.add_argument(
+        "--bdd-metabears-checkpoints",
+        nargs="*",
+        default=None,
+        help=(
+            "Explicit model_best-<seed>.pth.tar checkpoints from the SAME "
+            "trained BDD-OIA variant (do not mix base/entropy/csup)."
+        ),
+    )
+    parser.add_argument(
+        "--bdd-metabears-output-dir",
+        default=None,
+        help="Optional BDD-OIA MetaBEARS artifact directory.",
+    )
+    parser.add_argument(
+        "--bdd-metabears-batch-size",
+        type=int,
+        default=64,
+        help="Evaluation batch size for the BDD-OIA MetaBEARS run.",
+    )
     parser.add_argument(
         "--minikand-checkpoints",
         nargs="*",
@@ -903,6 +972,7 @@ def main():
         "halfmnist_eval": halfmnist_eval,
         "metabears_demo": metabears_demo,
         "metabears_halfmnist": metabears_halfmnist,
+        "metabears_bdd": metabears_bdd,
         "minikand_smoke": minikand_smoke,
         "minikand_train": minikand_train,
         "metabears_minikandinsky": metabears_minikandinsky,
